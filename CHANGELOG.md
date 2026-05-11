@@ -2,6 +2,13 @@
 
 Les changements notables sont documentés ici. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le versionnage respecte [SemVer](https://semver.org/lang/fr/).
 
+## [1.4.4] - 2026-05-12
+
+### Modifié
+- **Bouton "Planifier" du header supprimé** : redondant avec la carte « Planifier » centrale du dashboard.
+- **Bouton "← Accueil" déplacé du footer vers le header** (top-right), pour être visible au premier coup d'œil. Reste désactivé sur la vue d'accueil (où il n'a pas d'utilité), s'active automatiquement quand on est sur la vue résultats ou en cours de scan.
+- **Footer rééquilibré** : 4 boutons centrés (Vue technique / Historique / Relancer / Fermer) au lieu de 5.
+
 ## [1.4.3] - 2026-05-11
 
 ### Corrigé

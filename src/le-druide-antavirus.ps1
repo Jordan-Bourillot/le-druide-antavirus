@@ -3809,22 +3809,7 @@ function Show-DiagnosticGui {
     $brandLabel.AutoSize = $true
     $headerPanel.Controls.Add($brandLabel)
 
-    $btnScheduleHeader = New-Object System.Windows.Forms.Button
-    $btnScheduleHeader.Text = 'Planifier'
-    $btnScheduleHeader.Size = New-Object System.Drawing.Size(110, 36)
-    $btnScheduleHeader.Location = New-Object System.Drawing.Point(640, 32)
-    $btnScheduleHeader.FlatStyle = 'Flat'
-    $btnScheduleHeader.BackColor = [System.Drawing.Color]::FromArgb(0x1F, 0x4D, 0x3A)
-    $btnScheduleHeader.ForeColor = [System.Drawing.Color]::White
-    $btnScheduleHeader.FlatAppearance.BorderSize = 0
-    $btnScheduleHeader.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(0x2E, 0x6B, 0x4F)
-    $btnScheduleHeader.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(0x15, 0x37, 0x28)
-    $btnScheduleHeader.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
-    $btnScheduleHeader.Cursor = [System.Windows.Forms.Cursors]::Hand
-    $btnScheduleHeader.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
-    $btnScheduleHeader.Add_Click({ Show-ScheduleDialog })
-    $headerPanel.Controls.Add($btnScheduleHeader)
-    Set-RoundedRegion -Button $btnScheduleHeader -Radius 10
+    # ($btnScheduleHeader retire en v1.4.4 : redondant avec la carte "Planifier" du dashboard)
 
     $btnSettingsHeader = New-Object System.Windows.Forms.Button
     $btnSettingsHeader.Text = 'Paramètres'
@@ -3887,10 +3872,11 @@ function Show-DiagnosticGui {
     $footerPanel.Controls.Add($btnReport)
     Set-RoundedRegion -Button $btnReport -Radius 10
 
+    # $btnHome est cree ici mais ajoute au HEADER (v1.4.4 : visible au premier coup d'oeil)
     $btnHome = New-Object System.Windows.Forms.Button
     $btnHome.Text = [char]0x2190 + ' Accueil'
-    $btnHome.Location = New-Object System.Drawing.Point(300, 12)
     $btnHome.Size = New-Object System.Drawing.Size(110, 36)
+    $btnHome.Location = New-Object System.Drawing.Point(640, 32)
     $btnHome.FlatStyle = 'Flat'
     $btnHome.BackColor = $cBg
     $btnHome.ForeColor = $cText
@@ -3899,8 +3885,9 @@ function Show-DiagnosticGui {
     $btnHome.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(0xD8, 0xCF, 0xB8)
     $btnHome.Font = New-Object System.Drawing.Font('Segoe UI', 9.5, [System.Drawing.FontStyle]::Bold)
     $btnHome.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $btnHome.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
     $btnHome.Enabled = $false
-    $footerPanel.Controls.Add($btnHome)
+    $headerPanel.Controls.Add($btnHome)
     Set-RoundedRegion -Button $btnHome -Radius 10
 
     $btnRerun = New-Object System.Windows.Forms.Button
@@ -4796,25 +4783,23 @@ function Show-DiagnosticGui {
             if ($fw -lt 800) { $fw = 800 }
             if ($fh -lt 600) { $fh = 600 }
 
-            # Boutons header : alignés à droite
-            $btnScheduleHeader.Location = New-Object System.Drawing.Point(($fw - 260), 33)
+            # Boutons header : alignes a droite (Accueil + Parametres)
+            $btnHome.Location           = New-Object System.Drawing.Point(($fw - 260), 33)
             $btnSettingsHeader.Location = New-Object System.Drawing.Point(($fw - 140), 33)
 
-            # Centrage des 5 boutons du footer
-            # Tailles : 130 + 130 + 110 + 110 + 100 = 580, gaps 14*4 = 56 -> total 636
+            # Centrage des 4 boutons du footer (Accueil a deplace dans le header)
+            # Tailles : 130 + 130 + 110 + 100 = 470, gaps 14*3 = 42 -> total 512
             $gap = 14
-            $w1 = 130; $w2 = 130; $w3 = 110; $w4 = 110; $w5 = 100
-            $total = $w1 + $gap + $w2 + $gap + $w3 + $gap + $w4 + $gap + $w5
+            $w1 = 130; $w2 = 130; $w3 = 110; $w4 = 100
+            $total = $w1 + $gap + $w2 + $gap + $w3 + $gap + $w4
             $startX = [int](($fw - $total) / 2)
             $y = 14
             $btnTechnical.Location = New-Object System.Drawing.Point($startX, $y)
             $x = $startX + $w1 + $gap
             $btnReport.Location    = New-Object System.Drawing.Point($x, $y)
             $x = $x + $w2 + $gap
-            $btnHome.Location      = New-Object System.Drawing.Point($x, $y)
-            $x = $x + $w3 + $gap
             $btnRerun.Location     = New-Object System.Drawing.Point($x, $y)
-            $x = $x + $w4 + $gap
+            $x = $x + $w3 + $gap
             $btnQuit.Location      = New-Object System.Drawing.Point($x, $y)
 
             # FAB "L'Oeil d'Antavirus" en bas-droite (flottant, chevauche le footer)

@@ -4,7 +4,7 @@
 ; L'exécutable lui-même demande l'élévation au lancement (requireAdmin via ps2exe).
 
 #define MyAppName          "Le Druide Antavirus"
-#define MyAppVersion       "1.4.3"
+#define MyAppVersion       "1.4.4"
 #define MyAppPublisher     "Triskell Studio"
 #define MyAppURL           "https://antavirus.fr"
 #define MyAppSupportEmail  "contact@antavirus.fr"
