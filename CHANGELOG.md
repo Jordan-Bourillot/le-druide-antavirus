@@ -2,6 +2,11 @@
 
 Les changements notables sont documentés ici. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le versionnage respecte [SemVer](https://semver.org/lang/fr/).
 
+## [1.4.8] - 2026-05-12
+
+### Modifié
+- **Le rapport texte n'est plus écrit sur le Bureau** : chaque scan écrivait un fichier `Diagnostic-PC_*.txt` directement sur le Bureau de l'utilisateur, ce qui encombrait inutilement (le rapport est déjà accessible via le bouton « Historique » du dashboard). Désormais le rapport est écrit dans `%APPDATA%\LeDruide\Reports\` (le même dossier que l'archive consulté par « Historique »), invisible pour l'utilisateur lambda.
+
 ## [1.4.7] - 2026-05-12
 
 ### Corrigé

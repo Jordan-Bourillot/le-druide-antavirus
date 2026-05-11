@@ -40,8 +40,17 @@ param(
     [switch]$NoPause,
     [switch]$GUI,
     [switch]$Console,
-    [string]$OutputDir = [Environment]::GetFolderPath('Desktop')
+    # v1.4.8 : rapport ecrit dans %APPDATA%\LeDruide\Reports au lieu du Bureau.
+    # Le rapport reste accessible via le bouton "Historique" du dashboard.
+    [string]$OutputDir = (Join-Path $env:APPDATA 'LeDruide\Reports')
 )
+
+# Cree le dossier de rapports s'il n'existe pas (Save-Report exige un dossier existant)
+try {
+    if (-not (Test-Path -LiteralPath $OutputDir)) {
+        New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+    }
+} catch {}
 
 $ErrorActionPreference = 'Continue'
 
