@@ -2,6 +2,15 @@
 
 Les changements notables sont documentés ici. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le versionnage respecte [SemVer](https://semver.org/lang/fr/).
 
+## [1.3.2] - 2026-05-11
+
+### Ajouté
+- **Installateur Windows officiel (Inno Setup)** : nouveau binaire `LeDruideAntavirus-Setup-v1.3.2.exe` qui crée automatiquement un raccourci sur le bureau, une entrée dans le menu Démarrer, et inscrit l'application dans la liste des programmes Windows (Apps & Features). Installation par utilisateur (sans UAC), désinstallation propre incluse. Le binaire portable `LeDruideAntavirus-v1.3.2.exe` reste disponible pour les utilisateurs préférant zéro installation.
+- **Script `installer/installer.iss`** : configuration Inno Setup versionnée. Build reproductible via `ISCC installer/installer.iss` après compilation du portable via ps2exe.
+
+### Modifié
+- Le téléchargement par défaut sur antavirus.fr pointe désormais sur l'installateur. Le portable reste accessible depuis la page Transparence (avec hash SHA256 à vérifier).
+
 ## [1.3.1] - 2026-05-11
 
 ### Ajouté

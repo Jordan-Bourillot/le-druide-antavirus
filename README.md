@@ -37,8 +37,9 @@ Les grands antivirus américains sont anxiogènes, gavés de publicité, et reve
 Le binaire signé est distribué sur **[antavirus.fr](https://antavirus.fr)**.
 
 - Plateforme : **Windows 10 et 11 (64-bit)**
-- Taille : ~350 Ko
-- Installation : aucune. Le `.exe` est portable.
+- Deux variantes au choix :
+  - **`LeDruideAntavirus-Setup-vX.Y.Z.exe`** (~2 Mo) — installateur recommandé. Crée un raccourci bureau + entrée menu Démarrer, désinstallable depuis Paramètres > Applications.
+  - **`LeDruideAntavirus-vX.Y.Z.exe`** (~360 Ko) — binaire portable, zéro installation.
 
 Si vous préférez compiler vous-même depuis ce dépôt, suivez la section [Compilation](#compilation).
 
@@ -82,19 +83,30 @@ La fonction `ConvertTo-AnonymizedText` dans `src/le-druide-antavirus.ps1` est au
 
 ### Build
 
+**1. Compiler le binaire portable** (avec ps2exe) :
+
 ```powershell
 Import-Module ps2exe
 Invoke-PS2EXE `
     -inputFile  '.\src\le-druide-antavirus.ps1' `
-    -outputFile '.\LeDruideAntavirus.exe' `
+    -outputFile '.\dist\LeDruideAntavirus-v1.3.2.exe' `
     -iconFile   '.\assets\druide-antavirus.ico' `
     -title      'Le Druide Antavirus' `
     -company    'Triskell Studio' `
     -product    'Le Druide Antavirus' `
-    -version    '1.2.6.0' `
+    -version    '1.3.2.0' `
+    -copyright  '(C) 2026 Triskell Studio' `
     -noConsole `
     -requireAdmin
 ```
+
+**2. Compiler l'installateur** (avec [Inno Setup 6](https://jrsoftware.org/isdl.php)) :
+
+```powershell
+& 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' '.\installer\installer.iss'
+```
+
+L'installateur final est généré dans `.\dist\LeDruideAntavirus-Setup-v1.3.2.exe`. Adaptez la version dans `installer/installer.iss` (`#define MyAppVersion`) pour publier une nouvelle release.
 
 ### Exécution directe (sans compilation)
 
@@ -108,6 +120,8 @@ powershell -ExecutionPolicy Bypass -File .\src\le-druide-antavirus.ps1
 le-druide-antavirus/
 ├── src/
 │   └── le-druide-antavirus.ps1   # Source unique (moteur + UI + intégration IA)
+├── installer/
+│   └── installer.iss             # Configuration Inno Setup pour le binaire setup
 ├── assets/
 │   ├── druide-antavirus.ico       # Icône Windows multi-tailles
 │   └── logo.png                   # Logo héraldique (référence)
