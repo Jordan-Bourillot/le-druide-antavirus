@@ -1,0 +1,32 @@
+# Binaires compilés
+*.exe
+*.lnk
+
+# Sauvegardes
+*.bak
+*.tmp
+*~
+
+# Logs locaux
+Diagnostic-PC_*.txt
+Findings_*.json
+
+# Scripts de test temporaires
+_*.py
+_*.ps1
+_*.txt
+
+# Données utilisateur
+settings.json
+license.cache
+credentials.dat
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Éditeurs
+.vscode/
+.idea/
+*.swp
