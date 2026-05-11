@@ -4339,8 +4339,8 @@ function Show-DiagnosticGui {
 
     $scanCard = & $newActionCard ([char]::ConvertFromUtf32(0x1F50D)) "Scanner mon PC" "Diagnostic complet  -  environ 30 sec" $true  $cardW $cardH
     $exprCard = & $newActionCard ([char]0x26A1)                       "Scan express"    "Verification rapide  -  15 sec"        $false $cardW $cardH
-    $planCard = & $newActionCard ([char]0x1F4C5)                      "Planifier"       "Scan automatique hebdomadaire"         $false $cardW $cardH
-    $histCard = & $newActionCard ([char]0x1F4C2)                      "Historique"      "Consulter vos rapports precedents"     $false $cardW $cardH
+    $planCard = & $newActionCard ([char]::ConvertFromUtf32(0x1F4C5))  "Planifier"       "Scan automatique hebdomadaire"         $false $cardW $cardH
+    $histCard = & $newActionCard ([char]::ConvertFromUtf32(0x1F4C2))  "Historique"      "Consulter vos rapports precedents"     $false $cardW $cardH
 
     $cardScan     = $scanCard.Card
     $cardExpress  = $exprCard.Card
@@ -4372,7 +4372,7 @@ function Show-DiagnosticGui {
     $initialView.Controls.Add($chkFullCard)
 
     $initInfoLabel = New-Object System.Windows.Forms.Label
-    $initInfoLabel.Text = [char]0x1F512 + "  Lecture seule. Le Druide ne modifie jamais votre PC sans votre accord."
+    $initInfoLabel.Text = [char]::ConvertFromUtf32(0x1F512) + "  Lecture seule. Le Druide ne modifie jamais votre PC sans votre accord."
     $initInfoLabel.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     $initInfoLabel.ForeColor = $cTextMuted
     $initInfoLabel.AutoSize = $true

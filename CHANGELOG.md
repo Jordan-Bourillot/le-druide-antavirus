@@ -2,6 +2,11 @@
 
 Les changements notables sont documentés ici. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le versionnage respecte [SemVer](https://semver.org/lang/fr/).
 
+## [1.4.3] - 2026-05-11
+
+### Corrigé
+- **Crash en cascade « 128197 en System.Char » → « Null method » → « Location introuvable »** : trois emojis du dashboard (📅 calendrier, 📂 dossier, 🔒 cadenas) étaient écrits `[char]0x1F4C5` etc. Ces codepoints sont hors BMP (>U+FFFF) et ne tiennent pas dans un `System.Char` 16 bits, ce qui levait une exception, empêchait la création des cartes "Planifier" et "Historique", et faisait planter le layout responsive en chaîne. Remplacé par `[char]::ConvertFromUtf32(...)` qui renvoie correctement une paire de substitution.
+
 ## [1.4.2] - 2026-05-11
 
 ### Corrigé
