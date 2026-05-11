@@ -2,6 +2,12 @@
 
 Les changements notables sont documentés ici. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le versionnage respecte [SemVer](https://semver.org/lang/fr/).
 
+## [1.4.2] - 2026-05-11
+
+### Corrigé
+- **Crash au lancement « op_Subtraction » et « DrawRectangle 2 arguments »** : sur certaines machines, le binding PowerShell des handlers `Add_Paint` du hero card et des cartes d'action levait des exceptions au premier affichage (`$s.Width - 1` interprété comme opération sur tableau, et surcharge `DrawRectangle(Pen, Rectangle)` non résolue). Correctif : cast explicite via `[System.Windows.Forms.Control]$s`, utilisation de la surcharge `DrawRectangle(Pen, int, int, int, int)` (5 args), et try/catch protecteur autour de chaque handler de peinture.
+- **Parsing de la date du dernier scan** : `[datetime]$prevScan.Date` pouvait échouer si la valeur arrivait sous forme de tableau ou de string avec format régional. Remplacé par `[datetime]::Parse([string]$rawDate, [CultureInfo]::InvariantCulture)`.
+
 ## [1.4.1] - 2026-05-11
 
 ### Corrigé

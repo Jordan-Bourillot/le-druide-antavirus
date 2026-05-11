@@ -4021,11 +4021,15 @@ function Show-DiagnosticGui {
     $heroCard.Size = New-Object System.Drawing.Size(740, 132)
     $heroCard.Add_Paint({
         param($s, $e)
-        $e.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-        $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(216, 207, 184), 1)
-        $rect = New-Object System.Drawing.Rectangle(0, 0, $s.Width - 1, $s.Height - 1)
-        $e.Graphics.DrawRectangle($pen, $rect)
-        $pen.Dispose()
+        try {
+            $e.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+            $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(216, 207, 184), 1)
+            $w = [int]([System.Windows.Forms.Control]$s).Width - 1
+            $h = [int]([System.Windows.Forms.Control]$s).Height - 1
+            # Surcharge 5-arguments (Pen, int, int, int, int) - plus fiable que (Pen, Rectangle) sous PowerShell
+            $e.Graphics.DrawRectangle($pen, [int]0, [int]0, [int]$w, [int]$h)
+            $pen.Dispose()
+        } catch {}
     })
     Set-RoundedRegion -Button $heroCard -Radius 16
     $initialView.Controls.Add($heroCard)
@@ -4048,8 +4052,12 @@ function Show-DiagnosticGui {
     try {
         $prevScan = Get-PreviousFindings
         if ($prevScan -and $prevScan.Date) {
-            $scanDate = [datetime]$prevScan.Date
-            $days = [int]((Get-Date) - $scanDate).TotalDays
+            # Parsing defensif : on force scalaire et conversion str->datetime explicite
+            $rawDate = @($prevScan.Date)[0]
+            $scanDate = [datetime]::Parse([string]$rawDate, [System.Globalization.CultureInfo]::InvariantCulture)
+            $now = Get-Date
+            $diff = [TimeSpan]($now - $scanDate)
+            $days = [int]$diff.TotalDays
             $crit = @($prevScan.Findings | Where-Object { $_.Severity -eq 'Critical' }).Count
             $warn = @($prevScan.Findings | Where-Object { $_.Severity -eq 'Warning' }).Count
 
@@ -4218,11 +4226,14 @@ function Show-DiagnosticGui {
         if (-not $IsPrimary) {
             $card.Add_Paint({
                 param($s, $e)
-                $e.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-                $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(216, 207, 184), 1)
-                $rect = New-Object System.Drawing.Rectangle(0, 0, $s.Width - 1, $s.Height - 1)
-                $e.Graphics.DrawRectangle($pen, $rect)
-                $pen.Dispose()
+                try {
+                    $e.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+                    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(216, 207, 184), 1)
+                    $w = [int]([System.Windows.Forms.Control]$s).Width - 1
+                    $h = [int]([System.Windows.Forms.Control]$s).Height - 1
+                    $e.Graphics.DrawRectangle($pen, [int]0, [int]0, [int]$w, [int]$h)
+                    $pen.Dispose()
+                } catch {}
             })
         }
         Set-RoundedRegion -Button $card -Radius 14
