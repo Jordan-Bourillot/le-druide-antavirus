@@ -4388,20 +4388,24 @@ function Show-DiagnosticGui {
 
         # Bloc total : hero (132) + gap + 2 rangees de cartes (2 * 108 + gap) + gap + checkbox (22) + gap + info (18)
         $heroW = [math]::Min(740, $cw - 40)
-        $cardsTotalW = ($cardW * 2) + $gap
-        if ($cardsTotalW + 40 -gt $cw) {
-            # Largeur insuffisante : on reduit la largeur des cartes
-            $cardW2 = [math]::Max(240, [int](($cw - 40 - $gap) / 2))
-            $cardScan.Size     = New-Object System.Drawing.Size($cardW2, $cardH)
-            $cardExpress.Size  = New-Object System.Drawing.Size($cardW2, $cardH)
-            $cardSchedule.Size = New-Object System.Drawing.Size($cardW2, $cardH)
-            $cardHistory.Size  = New-Object System.Drawing.Size($cardW2, $cardH)
-            Set-RoundedRegion -Button $cardScan     -Radius 14
-            Set-RoundedRegion -Button $cardExpress  -Radius 14
-            Set-RoundedRegion -Button $cardSchedule -Radius 14
-            Set-RoundedRegion -Button $cardHistory  -Radius 14
-            $cardsTotalW = ($cardW2 * 2) + $gap
-        }
+
+        # v1.4.7 : calcule la largeur courante des cartes a CHAQUE resize.
+        # Sans cela, une fois retreci, le couple Size+RoundedRegion restait fige
+        # quand la fenetre grandissait a nouveau --> texte des cartes clippe.
+        $maxCardW = $cardW  # taille cible quand il y a la place (362)
+        $availForCards = $cw - 40 - $gap
+        $cardWcur = [math]::Min($maxCardW, [int]($availForCards / 2))
+        if ($cardWcur -lt 240) { $cardWcur = 240 }
+
+        $cardScan.Size     = New-Object System.Drawing.Size($cardWcur, $cardH)
+        $cardExpress.Size  = New-Object System.Drawing.Size($cardWcur, $cardH)
+        $cardSchedule.Size = New-Object System.Drawing.Size($cardWcur, $cardH)
+        $cardHistory.Size  = New-Object System.Drawing.Size($cardWcur, $cardH)
+        Set-RoundedRegion -Button $cardScan     -Radius 14
+        Set-RoundedRegion -Button $cardExpress  -Radius 14
+        Set-RoundedRegion -Button $cardSchedule -Radius 14
+        Set-RoundedRegion -Button $cardHistory  -Radius 14
+        $cardsTotalW = ($cardWcur * 2) + $gap
 
         $heroCard.Size = New-Object System.Drawing.Size($heroW, 132)
         Set-RoundedRegion -Button $heroCard -Radius 16

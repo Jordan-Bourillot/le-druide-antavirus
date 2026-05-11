@@ -2,6 +2,11 @@
 
 Les changements notables sont documentés ici. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le versionnage respecte [SemVer](https://semver.org/lang/fr/).
 
+## [1.4.7] - 2026-05-12
+
+### Corrigé
+- **Texte des cartes d'action coupé après redimensionnement** : quand on réduisait puis ré-agrandissait la fenêtre du Druide, les 4 cartes (Scanner / Express / Planifier / Historique) restaient figées à leur taille rétrécie (le code ne réinitialisait pas leur `Size`+`Region` quand il y avait à nouveau de la place), et le texte des descriptions débordait du clip rond. Le calcul de la largeur courante est désormais fait à chaque resize, dans les deux sens.
+
 ## [1.4.6] - 2026-05-12
 
 ### Modifié
