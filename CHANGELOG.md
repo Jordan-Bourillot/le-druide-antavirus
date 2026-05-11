@@ -2,6 +2,19 @@
 
 Les changements notables sont documentés ici. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le versionnage respecte [SemVer](https://semver.org/lang/fr/).
 
+## [1.4.0] - 2026-05-11
+
+### Ajouté
+- **Protection en temps réel orchestrée** : Le Druide reflète désormais l'état complet de la protection système (antivirus actif, surveillance temps réel, signatures à jour). Si la protection est désactivée, un bouton "Réactiver" rouge apparaît directement sur la carte de statut et la rétablit en un clic.
+- **Refonte complète de la vue d'accueil** en dashboard style antivirus moderne : carte hero qui adapte titre, sous-titre et badge selon l'état de protection ET le dernier scan ; 4 cartes d'action cliquables (Scanner mon PC / Scan express / Planifier / Historique) avec hover doré et clic centralisé.
+- **Scan antivirus en arrière-plan automatique** : à chaque déclenchement de "Scanner mon PC" ou "Scan express", un scan rapide Defender est lancé en parallèle de manière asynchrone. Les résultats sont visibles dans la prochaine ouverture du Druide.
+- **Bouton flottant "Demander à l'Œil" (FAB)** : sorti du footer, attaché en bas-droite de la fenêtre, animé en or-vert avec respiration. Effet "appel à l'action" sans agression.
+- **Module d'orchestration Defender** (section interne `DEFENDER ORCHESTRATION` dans `le-druide-antavirus.ps1`) avec sept fonctions wrapper : `Get-DefenderProtectionStatus`, `Enable-DefenderRealtimeProtection`, `Start-DefenderQuickScan`, `Start-DefenderFullScan`, `Get-DefenderThreats`, `Remove-DefenderThreat`, `Update-DefenderSignatures`.
+
+### Modifié
+- Positionnement produit : Le Druide passe d'outil de diagnostic à "antivirus français + assistant intelligent". Le code n'embarque pas son propre moteur — il orchestre les moteurs natifs de Windows (zéro conflit avec un AV tiers, signatures auto à jour, binaire toujours ~360 Ko en portable).
+- Coins arrondis 14 px sur les cartes d'action, 16 px sur le hero, 12 px sur le bouton de réactivation.
+
 ## [1.3.2] - 2026-05-11
 
 ### Ajouté

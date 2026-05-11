@@ -3552,6 +3552,193 @@ function Render-Findings {
     } catch {}
 }
 
+# ============================================================
+# DEFENDER ORCHESTRATION (v1.4.0)
+# ------------------------------------------------------------
+# Le Druide n'embarque pas son propre moteur antivirus : il
+# orchestre les moteurs natifs de Windows déjà présents sur
+# la machine de l'utilisateur. Cela garantit signatures à jour
+# et zéro conflit avec un AV tiers.
+# ============================================================
+
+function Get-DefenderProtectionStatus {
+    <#
+    .SYNOPSIS
+    Retourne l'état complet de la protection : objet structuré
+    consommable par l'UI (carte de statut, bandeau "Vous êtes protégé").
+
+    .OUTPUTS
+    PSCustomObject avec : IsProtected (bool global), AntivirusEnabled,
+    RealTimeProtectionEnabled, SignaturesUpToDate, SignatureAgeDays,
+    QuickScanAge, FullScanAge, ProtectionLabel (texte court pour l'UI),
+    ProtectionDetail (phrase d'explication), Error (string ou $null).
+    #>
+    try {
+        $mp = Get-MpComputerStatus -ErrorAction Stop
+        $sigAge = if ($mp.AntivirusSignatureLastUpdated) {
+            ((Get-Date) - $mp.AntivirusSignatureLastUpdated).TotalDays
+        } else { 999 }
+        $sigOk = $sigAge -le $Thresholds.SignatureAgeDaysWarning
+
+        $isProtected = $mp.AntivirusEnabled -and $mp.RealTimeProtectionEnabled -and $sigOk
+
+        $label = if ($isProtected) { 'Vous êtes protégé' }
+                 elseif (-not $mp.AntivirusEnabled) { 'Protection désactivée' }
+                 elseif (-not $mp.RealTimeProtectionEnabled) { 'Temps réel désactivé' }
+                 else { 'Signatures à mettre à jour' }
+
+        $detail = if ($isProtected) {
+            "Surveillance active en arrière-plan. Signatures à jour il y a {0:N0} jours." -f $sigAge
+        } elseif (-not $mp.AntivirusEnabled) {
+            "La protection principale est désactivée. Le Druide peut la réactiver en 1 clic."
+        } elseif (-not $mp.RealTimeProtectionEnabled) {
+            "La surveillance en temps réel est éteinte. Cliquez pour la réactiver."
+        } else {
+            "Vos signatures ont {0:N0} jours. Mise à jour recommandée." -f $sigAge
+        }
+
+        return [PSCustomObject]@{
+            IsProtected                = $isProtected
+            AntivirusEnabled           = [bool]$mp.AntivirusEnabled
+            RealTimeProtectionEnabled  = [bool]$mp.RealTimeProtectionEnabled
+            SignaturesUpToDate         = $sigOk
+            SignatureAgeDays           = [math]::Round($sigAge, 1)
+            QuickScanAge               = $mp.QuickScanAge
+            FullScanAge                = $mp.FullScanAge
+            ProtectionLabel            = $label
+            ProtectionDetail           = $detail
+            Error                      = $null
+        }
+    } catch {
+        return [PSCustomObject]@{
+            IsProtected                = $false
+            AntivirusEnabled           = $false
+            RealTimeProtectionEnabled  = $false
+            SignaturesUpToDate         = $false
+            SignatureAgeDays           = 999
+            QuickScanAge               = 999
+            FullScanAge                = 999
+            ProtectionLabel            = 'Statut indisponible'
+            ProtectionDetail           = "Impossible de lire l'état de la protection : $($_.Exception.Message)"
+            Error                      = $_.Exception.Message
+        }
+    }
+}
+
+function Enable-DefenderRealtimeProtection {
+    <#
+    .SYNOPSIS
+    Active la protection temps réel. Retourne $true si succès, $false sinon.
+    Nécessite des droits admin (déjà demandés au lancement par ps2exe).
+    #>
+    try {
+        Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction Stop
+        Start-Sleep -Milliseconds 800
+        $mp = Get-MpComputerStatus -ErrorAction Stop
+        return [bool]$mp.RealTimeProtectionEnabled
+    } catch {
+        return $false
+    }
+}
+
+function Start-DefenderQuickScan {
+    <#
+    .SYNOPSIS
+    Lance un scan rapide (~3 min). Asynchrone : retourne immédiatement.
+    Utilisez Get-DefenderScanResult pour récupérer les résultats.
+    #>
+    try {
+        Start-MpScan -ScanType QuickScan -AsJob -ErrorAction Stop | Out-Null
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Start-DefenderFullScan {
+    <#
+    .SYNOPSIS
+    Lance un scan complet (~30 min - 2h). Asynchrone.
+    #>
+    try {
+        Start-MpScan -ScanType FullScan -AsJob -ErrorAction Stop | Out-Null
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Get-DefenderThreats {
+    <#
+    .SYNOPSIS
+    Liste les menaces détectées (historique + quarantaine).
+
+    .OUTPUTS
+    Tableau d'objets PSCustomObject : ThreatID, Name, SeverityID,
+    ActionSuccess, InitialDetectionTime, Resources (chemins concernés),
+    DisplayName (nom lisible), SeverityLabel (Élevé / Moyen / Faible).
+    #>
+    try {
+        $detections = Get-MpThreatDetection -ErrorAction Stop
+        if (-not $detections) { return @() }
+
+        return $detections | ForEach-Object {
+            $sevId = $_.ThreatID  # ThreatStatusID en réalité, mais on simplifie
+            $label = switch ($_.InitialDetectionTime) {
+                $null { 'Inconnu' }
+                default {
+                    if ($_ -is [datetime]) { 'Détecté' } else { 'Inconnu' }
+                }
+            }
+            [PSCustomObject]@{
+                ThreatID              = $_.ThreatID
+                Name                  = $_.ThreatID
+                ActionSuccess         = $_.ActionSuccess
+                InitialDetectionTime  = $_.InitialDetectionTime
+                Resources             = $_.Resources
+                ProcessName           = $_.ProcessName
+                DomainUser            = $_.DomainUser
+                RemediationTime       = $_.RemediationTime
+            }
+        }
+    } catch {
+        return @()
+    }
+}
+
+function Remove-DefenderThreat {
+    <#
+    .SYNOPSIS
+    Supprime/met en quarantaine une menace par son ThreatID.
+    Si aucun ID fourni, supprime toutes les menaces détectées.
+    #>
+    param([Parameter()][int64]$ThreatID)
+    try {
+        if ($ThreatID) {
+            Remove-MpThreat -ThreatID $ThreatID -ErrorAction Stop
+        } else {
+            Remove-MpThreat -ErrorAction Stop
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Update-DefenderSignatures {
+    <#
+    .SYNOPSIS
+    Force la mise à jour des signatures (équivalent à 'Windows Update' côté Defender).
+    Synchrone, peut prendre ~30 secondes selon la connexion.
+    #>
+    try {
+        Update-MpSignature -ErrorAction Stop
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Show-DiagnosticGui {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
@@ -3822,55 +4009,350 @@ function Show-DiagnosticGui {
     $contentPanel.Dock = 'Fill'
     $contentPanel.BackColor = $cBg
 
-    # ----- VUE 1 : INITIAL -----
+    # ----- VUE 1 : ACCUEIL (dashboard style antivirus) -----
     $initialView = New-Object System.Windows.Forms.Panel
     $initialView.Dock = 'Fill'
     $initialView.BackColor = $cBg
+    $initialView.AutoScroll = $true
 
-    $bigLogo = New-Object System.Windows.Forms.PictureBox
-    $bigLogo.Size = New-Object System.Drawing.Size(128, 128)
-    $bigLogo.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
-    $bigLogo.BackColor = [System.Drawing.Color]::Transparent
-    try { $bigLogoBmp = Get-DruideLogo -Size 256; if ($bigLogoBmp) { $bigLogo.Image = $bigLogoBmp } } catch {}
-    $initialView.Controls.Add($bigLogo)
+    # ====== HERO : carte de statut de protection ======
+    $heroCard = New-Object System.Windows.Forms.Panel
+    $heroCard.BackColor = $cCard
+    $heroCard.Size = New-Object System.Drawing.Size(740, 132)
+    $heroCard.Add_Paint({
+        param($s, $e)
+        $e.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(216, 207, 184), 1)
+        $rect = New-Object System.Drawing.Rectangle(0, 0, $s.Width - 1, $s.Height - 1)
+        $e.Graphics.DrawRectangle($pen, $rect)
+        $pen.Dispose()
+    })
+    Set-RoundedRegion -Button $heroCard -Radius 16
+    $initialView.Controls.Add($heroCard)
 
-    $welcomeLabel = New-Object System.Windows.Forms.Label
-    $welcomeLabel.Text = "Bonjour, je suis Le Druide"
-    $welcomeLabel.Font = New-Object System.Drawing.Font('Segoe UI', 17, [System.Drawing.FontStyle]::Bold)
-    $welcomeLabel.ForeColor = $cText
-    $welcomeLabel.AutoSize = $true
-    $initialView.Controls.Add($welcomeLabel)
+    # Logo druide a gauche
+    $heroIcon = New-Object System.Windows.Forms.PictureBox
+    $heroIcon.Size = New-Object System.Drawing.Size(96, 96)
+    $heroIcon.Location = New-Object System.Drawing.Point(20, 18)
+    $heroIcon.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
+    $heroIcon.BackColor = [System.Drawing.Color]::Transparent
+    try { $heroBmp = Get-DruideLogo -Size 192; if ($heroBmp) { $heroIcon.Image = $heroBmp } } catch {}
+    $heroCard.Controls.Add($heroIcon)
 
-    $welcomeSubtitle = New-Object System.Windows.Forms.Label
-    $welcomeSubtitle.Text = "Je vais inspecter votre PC en quelques secondes, sans rien modifier."
-    $welcomeSubtitle.Font = New-Object System.Drawing.Font('Segoe UI', 10)
-    $welcomeSubtitle.ForeColor = $cTextMuted
-    $welcomeSubtitle.AutoSize = $true
-    $initialView.Controls.Add($welcomeSubtitle)
+    # Etat de protection deduit du dernier scan archive
+    $heroTitleText     = "Bonjour"
+    $heroSubtitleText  = "Vous n'avez pas encore lance de diagnostic."
+    $heroSubtitle2Text = "Le premier scan ne prend qu'une trentaine de secondes."
+    $heroBadgeColor    = $cBrand
+    $heroBadgeText     = "Bienvenue"
+    try {
+        $prevScan = Get-PreviousFindings
+        if ($prevScan -and $prevScan.Date) {
+            $scanDate = [datetime]$prevScan.Date
+            $days = [int]((Get-Date) - $scanDate).TotalDays
+            $crit = @($prevScan.Findings | Where-Object { $_.Severity -eq 'Critical' }).Count
+            $warn = @($prevScan.Findings | Where-Object { $_.Severity -eq 'Warning' }).Count
 
-    $btnAnalyze = New-Object System.Windows.Forms.Button
-    $btnAnalyze.Text = 'Analyser mon PC'
-    $btnAnalyze.Size = New-Object System.Drawing.Size(300, 64)
-    $btnAnalyze.FlatStyle = 'Flat'
-    $btnAnalyze.BackColor = $cAccent
-    $btnAnalyze.ForeColor = [System.Drawing.Color]::White
-    $btnAnalyze.FlatAppearance.BorderSize = 0
-    $btnAnalyze.FlatAppearance.MouseOverBackColor = $cAccentHover
-    $btnAnalyze.FlatAppearance.MouseDownBackColor = $cAccentDown
-    $btnAnalyze.Font = New-Object System.Drawing.Font('Segoe UI', 14, [System.Drawing.FontStyle]::Bold)
-    $btnAnalyze.Cursor = [System.Windows.Forms.Cursors]::Hand
-    $initialView.Controls.Add($btnAnalyze)
-    Set-RoundedRegion -Button $btnAnalyze -Radius 18
+            if ($days -le 0)       { $relTime = "aujourd'hui" }
+            elseif ($days -eq 1)   { $relTime = "hier" }
+            elseif ($days -lt 7)   { $relTime = "il y a $days jours" }
+            elseif ($days -lt 14)  { $relTime = "il y a 1 semaine" }
+            else                   { $relTime = "il y a $([int]($days/7)) semaines" }
 
-    $initInfoLabel = New-Object System.Windows.Forms.Label
-    $initInfoLabel.Text = "Environ 30 secondes      Lecture seule, aucune modification"
-    $initInfoLabel.Font = New-Object System.Drawing.Font('Segoe UI', 9)
-    $initInfoLabel.ForeColor = $cTextMuted
-    $initInfoLabel.AutoSize = $true
-    $initialView.Controls.Add($initInfoLabel)
+            if ($crit -gt 0) {
+                $heroTitleText    = "Action recommandee"
+                $heroSubtitleText = "Dernier scan $relTime  -  $crit point(s) critique(s) a corriger."
+                $heroBadgeColor   = [System.Drawing.Color]::FromArgb(0xC8, 0x3A, 0x3A)
+                $heroBadgeText    = "A SURVEILLER"
+            } elseif ($warn -gt 0) {
+                $heroTitleText    = "PC en bonne forme"
+                $heroSubtitleText = "Dernier scan $relTime  -  $warn avertissement(s) a noter."
+                $heroBadgeColor   = $cBrand
+                $heroBadgeText    = "QUELQUES NOTES"
+            } else {
+                $heroTitleText    = "Vous etes protege"
+                $heroSubtitleText = "Dernier scan $relTime  -  aucune anomalie detectee."
+                $heroBadgeColor   = $cAccent
+                $heroBadgeText    = "TOUT VA BIEN"
+            }
+            $heroSubtitle2Text = "Relancez un diagnostic quand vous le souhaitez."
+        }
+    } catch {}
 
+    # Si un scan automatique est planifie, on remplace la 2e ligne par "Prochain scan : ..."
+    try {
+        $sched = Get-ScheduledScanInfo
+        if ($sched -and $sched.Active -and $sched.NextRun) {
+            $nr = [datetime]$sched.NextRun
+            $heroSubtitle2Text = "Prochain scan planifie : " + $nr.ToString('dddd d MMMM "a" HH"h"mm', [System.Globalization.CultureInfo]::GetCultureInfo('fr-FR'))
+        }
+    } catch {}
+
+    # ----- Surcouche Defender (v1.4.0) -----
+    # Reflete l'etat temps reel de la protection systeme. Prioritise sur tout :
+    # si la protection est inactive, on remplace le hero pour pousser au fix.
+    $defenderStatus = $null
+    try { $defenderStatus = Get-DefenderProtectionStatus } catch {}
+    if ($defenderStatus -and -not $defenderStatus.Error) {
+        if (-not $defenderStatus.IsProtected) {
+            $heroTitleText     = $defenderStatus.ProtectionLabel
+            $heroSubtitleText  = $defenderStatus.ProtectionDetail
+            $heroSubtitle2Text = "Cliquez sur " + [char]0x00AB + " Reactiver " + [char]0x00BB + " pour retablir la surveillance."
+            $heroBadgeColor    = [System.Drawing.Color]::FromArgb(0xC8, 0x3A, 0x3A)
+            $heroBadgeText     = "PROTECTION INACTIVE"
+        } elseif ($heroBadgeText -eq "Bienvenue") {
+            # Pas de scan precedent + protection active : on remonte un etat positif
+            $heroTitleText    = "Vous etes protege"
+            $heroSubtitleText = $defenderStatus.ProtectionDetail
+            $heroBadgeColor   = $cAccent
+            $heroBadgeText    = "PROTECTION ACTIVE"
+        }
+    }
+
+    $heroBadge = New-Object System.Windows.Forms.Label
+    $heroBadge.Text = "  $heroBadgeText  "
+    $heroBadge.Font = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Bold)
+    $heroBadge.ForeColor = [System.Drawing.Color]::White
+    $heroBadge.BackColor = $heroBadgeColor
+    $heroBadge.AutoSize = $true
+    $heroBadge.Location = New-Object System.Drawing.Point(132, 22)
+    $heroBadge.Padding = New-Object System.Windows.Forms.Padding(2, 4, 2, 4)
+    $heroCard.Controls.Add($heroBadge)
+
+    $heroTitle = New-Object System.Windows.Forms.Label
+    $heroTitle.Text = $heroTitleText
+    $heroTitle.Font = New-Object System.Drawing.Font('Segoe UI', 19, [System.Drawing.FontStyle]::Bold)
+    $heroTitle.ForeColor = $cText
+    $heroTitle.AutoSize = $true
+    $heroTitle.Location = New-Object System.Drawing.Point(130, 46)
+    $heroCard.Controls.Add($heroTitle)
+
+    $heroSubtitle = New-Object System.Windows.Forms.Label
+    $heroSubtitle.Text = $heroSubtitleText
+    $heroSubtitle.Font = New-Object System.Drawing.Font('Segoe UI', 10)
+    $heroSubtitle.ForeColor = $cTextMuted
+    $heroSubtitle.AutoSize = $true
+    $heroSubtitle.Location = New-Object System.Drawing.Point(132, 86)
+    $heroCard.Controls.Add($heroSubtitle)
+
+    $heroSubtitle2 = New-Object System.Windows.Forms.Label
+    $heroSubtitle2.Text = $heroSubtitle2Text
+    $heroSubtitle2.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+    $heroSubtitle2.ForeColor = $cTextMuted
+    $heroSubtitle2.AutoSize = $true
+    $heroSubtitle2.Location = New-Object System.Drawing.Point(132, 106)
+    $heroCard.Controls.Add($heroSubtitle2)
+
+    # ----- Bouton de reactivation Defender (v1.4.0) -----
+    # Visible uniquement si la protection temps reel est coupee.
+    # Ancre a droite du hero pour rester visible meme apres resize.
+    if ($defenderStatus -and -not $defenderStatus.IsProtected -and -not $defenderStatus.Error) {
+        $btnReactivate = New-Object System.Windows.Forms.Button
+        $btnReactivate.Text = "Reactiver"
+        $btnReactivate.Size = New-Object System.Drawing.Size(130, 38)
+        $btnReactivate.BackColor = [System.Drawing.Color]::FromArgb(0xC8, 0x3A, 0x3A)
+        $btnReactivate.ForeColor = [System.Drawing.Color]::White
+        $btnReactivate.FlatStyle = 'Flat'
+        $btnReactivate.FlatAppearance.BorderSize = 0
+        $btnReactivate.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(0xD8, 0x4A, 0x4A)
+        $btnReactivate.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
+        $btnReactivate.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $btnReactivate.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
+        $btnReactivate.Location = New-Object System.Drawing.Point(($heroCard.Width - 150), 47)
+        Set-RoundedRegion -Button $btnReactivate -Radius 12
+        $btnReactivate.Add_Click({
+            $btnReactivate.Enabled = $false
+            $btnReactivate.Text = "Patience..."
+            $ok = Enable-DefenderRealtimeProtection
+            if ($ok) {
+                $newStatus = Get-DefenderProtectionStatus
+                if ($newStatus -and $newStatus.IsProtected) {
+                    $heroTitle.Text     = "Vous etes protege"
+                    $heroSubtitle.Text  = $newStatus.ProtectionDetail
+                    $heroSubtitle2.Text = "Surveillance active. Lancez un diagnostic quand vous le souhaitez."
+                    $heroBadge.Text     = "  PROTECTION ACTIVE  "
+                    $heroBadge.BackColor = $cAccent
+                    $btnReactivate.Visible = $false
+                    [System.Windows.Forms.MessageBox]::Show($form, "Protection temps reel reactivee.", "Le Druide", 'OK', 'Information') | Out-Null
+                }
+            } else {
+                $btnReactivate.Enabled = $true
+                $btnReactivate.Text = "Reactiver"
+                [System.Windows.Forms.MessageBox]::Show($form, "Impossible de reactiver automatiquement. Verifiez que Le Druide est lance en tant qu'administrateur, ou ouvrez Securite Windows pour l'activer manuellement.", "Le Druide", 'OK', 'Warning') | Out-Null
+            }
+        })
+        $heroCard.Controls.Add($btnReactivate)
+        $btnReactivate.BringToFront()
+    }
+
+    # ====== Fabrique : creer une "carte action" cliquable ======
+    # Approche : la carte est un Panel "visible" + un Button INVISIBLE hors-ecran
+    # qui sert de relais pour Add_Click (compatible avec le code existant
+    # qui fait $btnAnalyze.Add_Click({...})). Tous les enfants forwardent leur
+    # clic vers ce bouton via PerformClick. Le hover est gere manuellement sur
+    # le Panel + tous ses enfants, ce qui evite le scintillement.
+    $newActionCard = {
+        param(
+            [string]$IconChar,
+            [string]$Title,
+            [string]$Desc,
+            [bool]$IsPrimary,
+            [int]$Width,
+            [int]$Height
+        )
+
+        if ($IsPrimary) {
+            $bgNormal = $cAccent
+            $bgHover  = $cAccentHover
+            $bgDown   = $cAccentDown
+        } else {
+            $bgNormal = $cCard
+            $bgHover  = [System.Drawing.Color]::FromArgb(0xFA, 0xF5, 0xE6)
+            $bgDown   = [System.Drawing.Color]::FromArgb(0xEC, 0xE5, 0xD0)
+        }
+
+        $card = New-Object System.Windows.Forms.Panel
+        $card.Size = New-Object System.Drawing.Size($Width, $Height)
+        $card.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $card.BackColor = $bgNormal
+        if (-not $IsPrimary) {
+            $card.Add_Paint({
+                param($s, $e)
+                $e.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+                $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(216, 207, 184), 1)
+                $rect = New-Object System.Drawing.Rectangle(0, 0, $s.Width - 1, $s.Height - 1)
+                $e.Graphics.DrawRectangle($pen, $rect)
+                $pen.Dispose()
+            })
+        }
+        Set-RoundedRegion -Button $card -Radius 14
+
+        $iconColor  = if ($IsPrimary) { [System.Drawing.Color]::White } else { $cAccent }
+        $titleColor = if ($IsPrimary) { [System.Drawing.Color]::White } else { $cText }
+        $descColor  = if ($IsPrimary) { [System.Drawing.Color]::FromArgb(0xDF, 0xE9, 0xE2) } else { $cTextMuted }
+
+        $iconLabel = New-Object System.Windows.Forms.Label
+        $iconLabel.Text = $IconChar
+        $iconLabel.Font = New-Object System.Drawing.Font('Segoe UI Emoji', 26)
+        $iconLabel.ForeColor = $iconColor
+        $iconLabel.BackColor = [System.Drawing.Color]::Transparent
+        $iconLabel.AutoSize = $true
+        $iconLabel.Location = New-Object System.Drawing.Point(20, 28)
+        $iconLabel.UseCompatibleTextRendering = $true
+        $iconLabel.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $card.Controls.Add($iconLabel)
+
+        $titleLabel = New-Object System.Windows.Forms.Label
+        $titleLabel.Text = $Title
+        $titleLabel.Font = New-Object System.Drawing.Font('Segoe UI', 13, [System.Drawing.FontStyle]::Bold)
+        $titleLabel.ForeColor = $titleColor
+        $titleLabel.BackColor = [System.Drawing.Color]::Transparent
+        $titleLabel.AutoSize = $true
+        $titleLabel.Location = New-Object System.Drawing.Point(78, 28)
+        $titleLabel.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $card.Controls.Add($titleLabel)
+
+        $descLabel = New-Object System.Windows.Forms.Label
+        $descLabel.Text = $Desc
+        $descLabel.Font = New-Object System.Drawing.Font('Segoe UI', 9.5)
+        $descLabel.ForeColor = $descColor
+        $descLabel.BackColor = [System.Drawing.Color]::Transparent
+        $descLabel.AutoSize = $true
+        $descLabel.Location = New-Object System.Drawing.Point(80, 58)
+        $descLabel.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $card.Controls.Add($descLabel)
+
+        # Bouton relais invisible (hors ecran) : sert juste pour Add_Click
+        $btn = New-Object System.Windows.Forms.Button
+        $btn.Size = New-Object System.Drawing.Size(1, 1)
+        $btn.Location = New-Object System.Drawing.Point(-1000, -1000)
+        $btn.TabStop = $false
+        $btn.FlatStyle = 'Flat'
+        $btn.FlatAppearance.BorderSize = 0
+        $card.Controls.Add($btn)
+
+        # Hover : on met a jour la couleur de fond sur MouseEnter de la carte
+        # et de TOUS ses enfants. MouseLeave n'est attache qu'a la carte (le
+        # MouseLeave d'un enfant signifie souvent qu'on entre dans un autre
+        # enfant ou dans la carte, ce qui ne doit pas reinitialiser le hover).
+        $setHover = { $card.BackColor = $bgHover }.GetNewClosure()
+        $setNormal = {
+            try {
+                $pos = [System.Windows.Forms.Cursor]::Position
+                $cardScreen = $card.RectangleToScreen($card.ClientRectangle)
+                if (-not $cardScreen.Contains($pos)) {
+                    $card.BackColor = $bgNormal
+                }
+            } catch { $card.BackColor = $bgNormal }
+        }.GetNewClosure()
+        $setDown = { $card.BackColor = $bgDown }.GetNewClosure()
+        $setUp   = { $card.BackColor = $bgHover }.GetNewClosure()
+
+        $card.Add_MouseEnter($setHover)
+        $card.Add_MouseLeave($setNormal)
+        $card.Add_MouseDown($setDown)
+        $card.Add_MouseUp($setUp)
+
+        $iconLabel.Add_MouseEnter($setHover)
+        $iconLabel.Add_MouseLeave($setNormal)
+        $iconLabel.Add_MouseDown($setDown)
+        $iconLabel.Add_MouseUp($setUp)
+        $titleLabel.Add_MouseEnter($setHover)
+        $titleLabel.Add_MouseLeave($setNormal)
+        $titleLabel.Add_MouseDown($setDown)
+        $titleLabel.Add_MouseUp($setUp)
+        $descLabel.Add_MouseEnter($setHover)
+        $descLabel.Add_MouseLeave($setNormal)
+        $descLabel.Add_MouseDown($setDown)
+        $descLabel.Add_MouseUp($setUp)
+
+        # Forwarder les clics vers le bouton relais
+        $forward = { $btn.PerformClick() }.GetNewClosure()
+        $iconLabel.Add_Click($forward)
+        $titleLabel.Add_Click($forward)
+        $descLabel.Add_Click($forward)
+        $card.Add_Click($forward)
+
+        return @{
+            Card   = $card
+            Button = $btn
+            Icon   = $iconLabel
+            Title  = $titleLabel
+            Desc   = $descLabel
+        }
+    }
+
+    # ====== 4 cartes d'action (2x2) ======
+    $cardW = 362
+    $cardH = 108
+
+    $scanCard = & $newActionCard ([char]::ConvertFromUtf32(0x1F50D)) "Scanner mon PC" "Diagnostic complet  -  environ 30 sec" $true  $cardW $cardH
+    $exprCard = & $newActionCard ([char]0x26A1)                       "Scan express"    "Verification rapide  -  15 sec"        $false $cardW $cardH
+    $planCard = & $newActionCard ([char]0x1F4C5)                      "Planifier"       "Scan automatique hebdomadaire"         $false $cardW $cardH
+    $histCard = & $newActionCard ([char]0x1F4C2)                      "Historique"      "Consulter vos rapports precedents"     $false $cardW $cardH
+
+    $cardScan     = $scanCard.Card
+    $cardExpress  = $exprCard.Card
+    $cardSchedule = $planCard.Card
+    $cardHistory  = $histCard.Card
+
+    # On expose $btnAnalyze et $btnExpress (referencees plus bas dans les handlers)
+    $btnAnalyze = $scanCard.Button
+    $btnExpress = $exprCard.Button
+    $btnHomeSchedule = $planCard.Button
+    $btnHomeHistory  = $histCard.Button
+
+    $btnHomeSchedule.Add_Click({ Show-ScheduleDialog })
+    $btnHomeHistory.Add_Click({ Show-HistoryDialog })
+
+    $initialView.Controls.Add($cardScan)
+    $initialView.Controls.Add($cardExpress)
+    $initialView.Controls.Add($cardSchedule)
+    $initialView.Controls.Add($cardHistory)
+
+    # ====== Bas de page : mode complet + rassurance ======
     $chkFullCard = New-Object System.Windows.Forms.CheckBox
-    $chkFullCard.Text = "Mode complet (plus long, vérifie aussi les mises à jour Windows)"
+    $chkFullCard.Text = "Mode complet (plus long, verifie aussi les mises a jour Windows)"
     $chkFullCard.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     $chkFullCard.ForeColor = $cTextMuted
     $chkFullCard.AutoSize = $true
@@ -3878,32 +4360,56 @@ function Show-DiagnosticGui {
     $chkFullCard.Checked = $Full.IsPresent
     $initialView.Controls.Add($chkFullCard)
 
-    $btnExpress = New-Object System.Windows.Forms.Button
-    $btnExpress.Text = "Scan express (15s)"
-    $btnExpress.Size = New-Object System.Drawing.Size(200, 40)
-    $btnExpress.FlatStyle = 'Flat'
-    $btnExpress.BackColor = [System.Drawing.Color]::White
-    $btnExpress.ForeColor = $cAccent
-    $btnExpress.FlatAppearance.BorderSize = 0
-    $btnExpress.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(0xEC, 0xE5, 0xD0)
-    $btnExpress.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(0xD8, 0xCF, 0xB8)
-    $btnExpress.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
-    $btnExpress.Cursor = [System.Windows.Forms.Cursors]::Hand
-    $initialView.Controls.Add($btnExpress)
-    Set-RoundedRegion -Button $btnExpress -Radius 14
+    $initInfoLabel = New-Object System.Windows.Forms.Label
+    $initInfoLabel.Text = [char]0x1F512 + "  Lecture seule. Le Druide ne modifie jamais votre PC sans votre accord."
+    $initInfoLabel.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+    $initInfoLabel.ForeColor = $cTextMuted
+    $initInfoLabel.AutoSize = $true
+    $initInfoLabel.UseCompatibleTextRendering = $true
+    $initialView.Controls.Add($initInfoLabel)
 
+    # ====== Layout responsive ======
     $initialView.Add_Resize({
         $cw = $initialView.ClientSize.Width
-        $ch = $initialView.ClientSize.Height
-        $totalH = 128 + 18 + 32 + 8 + 22 + 28 + 60 + 16 + 20 + 14 + 22
-        $top = [math]::Max(20, [int](($ch - $totalH) / 2))
-        $bigLogo.Location         = New-Object System.Drawing.Point([int](($cw - $bigLogo.Width)/2), $top)
-        $welcomeLabel.Location    = New-Object System.Drawing.Point([int](($cw - $welcomeLabel.Width)/2), [int]($bigLogo.Bottom + 18))
-        $welcomeSubtitle.Location = New-Object System.Drawing.Point([int](($cw - $welcomeSubtitle.Width)/2), [int]($welcomeLabel.Bottom + 8))
-        $btnAnalyze.Location      = New-Object System.Drawing.Point([int](($cw - $btnAnalyze.Width)/2), [int]($welcomeSubtitle.Bottom + 28))
-        $initInfoLabel.Location   = New-Object System.Drawing.Point([int](($cw - $initInfoLabel.Width)/2), [int]($btnAnalyze.Bottom + 16))
-        $chkFullCard.Location     = New-Object System.Drawing.Point([int](($cw - $chkFullCard.Width)/2), [int]($initInfoLabel.Bottom + 14))
-        $btnExpress.Location      = New-Object System.Drawing.Point([int](($cw - $btnExpress.Width)/2), [int]($chkFullCard.Bottom + 18))
+        $gap = 16
+
+        # Bloc total : hero (132) + gap + 2 rangees de cartes (2 * 108 + gap) + gap + checkbox (22) + gap + info (18)
+        $heroW = [math]::Min(740, $cw - 40)
+        $cardsTotalW = ($cardW * 2) + $gap
+        if ($cardsTotalW + 40 -gt $cw) {
+            # Largeur insuffisante : on reduit la largeur des cartes
+            $cardW2 = [math]::Max(240, [int](($cw - 40 - $gap) / 2))
+            $cardScan.Size     = New-Object System.Drawing.Size($cardW2, $cardH)
+            $cardExpress.Size  = New-Object System.Drawing.Size($cardW2, $cardH)
+            $cardSchedule.Size = New-Object System.Drawing.Size($cardW2, $cardH)
+            $cardHistory.Size  = New-Object System.Drawing.Size($cardW2, $cardH)
+            Set-RoundedRegion -Button $cardScan     -Radius 14
+            Set-RoundedRegion -Button $cardExpress  -Radius 14
+            Set-RoundedRegion -Button $cardSchedule -Radius 14
+            Set-RoundedRegion -Button $cardHistory  -Radius 14
+            $cardsTotalW = ($cardW2 * 2) + $gap
+        }
+
+        $heroCard.Size = New-Object System.Drawing.Size($heroW, 132)
+        Set-RoundedRegion -Button $heroCard -Radius 16
+
+        $totalH = 132 + 18 + $cardH + $gap + $cardH + 22 + 22 + 14
+        $top = [math]::Max(24, [int](($initialView.ClientSize.Height - $totalH) / 2))
+
+        $heroCard.Location     = New-Object System.Drawing.Point([int](($cw - $heroCard.Width)/2), $top)
+
+        $rowY1 = $heroCard.Bottom + 18
+        $rowY2 = $rowY1 + $cardH + $gap
+        $colX1 = [int](($cw - $cardsTotalW) / 2)
+        $colX2 = $colX1 + $cardScan.Width + $gap
+
+        $cardScan.Location     = New-Object System.Drawing.Point($colX1, $rowY1)
+        $cardExpress.Location  = New-Object System.Drawing.Point($colX2, $rowY1)
+        $cardSchedule.Location = New-Object System.Drawing.Point($colX1, $rowY2)
+        $cardHistory.Location  = New-Object System.Drawing.Point($colX2, $rowY2)
+
+        $chkFullCard.Location  = New-Object System.Drawing.Point([int](($cw - $chkFullCard.Width)/2), [int]($rowY2 + $cardH + 22))
+        $initInfoLabel.Location = New-Object System.Drawing.Point([int](($cw - $initInfoLabel.Width)/2), [int]($chkFullCard.Bottom + 12))
     })
 
     # ----- VUE 2 : RUNNING -----
@@ -4238,10 +4744,13 @@ function Show-DiagnosticGui {
 
     $btnAnalyze.Add_Click({
         $script:NextScanMode = 'Standard'
+        # v1.4.0 : declenche en parallele un scan rapide Defender (background async).
+        try { Start-DefenderQuickScan | Out-Null } catch {}
         & $runAnalysis
     })
     $btnExpress.Add_Click({
         $script:NextScanMode = 'Express'
+        try { Start-DefenderQuickScan | Out-Null } catch {}
         & $runAnalysis
     })
     $btnRerun.Add_Click({
