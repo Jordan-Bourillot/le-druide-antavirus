@@ -222,12 +222,16 @@ function Add-Finding {
 
 function Invoke-Check {
     param([string]$Name, [scriptblock]$Block)
+    # On laisse respirer la pompe de messages avant chaque check pour que
+    # l'animation du druide reste fluide entre les operations bloquantes.
+    if ($script:GuiContext) { try { [System.Windows.Forms.Application]::DoEvents() } catch {} }
     try {
         & $Block
     }
     catch {
         Write-Result -Level ERR -Message "$Name : $($_.Exception.Message)"
     }
+    if ($script:GuiContext) { try { [System.Windows.Forms.Application]::DoEvents() } catch {} }
 }
 
 # ============================================================
@@ -1966,14 +1970,14 @@ function Show-DruidixDialog {
     $form.ForeColor = $cText
     try { $ic = Get-DruideIcon; if ($ic) { $form.Icon = $ic } } catch {}
 
-    $chatRtb = New-Object System.Windows.Forms.RichTextBox
-    $chatRtb.Dock = 'Fill'
-    $chatRtb.BackColor = $cBg
-    $chatRtb.ForeColor = $cText
-    $chatRtb.Font = New-Object System.Drawing.Font('Segoe UI', 10)
-    $chatRtb.ReadOnly = $true
-    $chatRtb.BorderStyle = 'None'
-    $form.Controls.Add($chatRtb)
+    $chatFlow = New-Object System.Windows.Forms.FlowLayoutPanel
+    $chatFlow.Dock = 'Fill'
+    $chatFlow.BackColor = $cBg
+    $chatFlow.AutoScroll = $true
+    $chatFlow.FlowDirection = 'TopDown'
+    $chatFlow.WrapContents = $false
+    $chatFlow.Padding = New-Object System.Windows.Forms.Padding(20, 16, 20, 16)
+    $form.Controls.Add($chatFlow)
 
     $inputPanel = New-Object System.Windows.Forms.Panel
     $inputPanel.Dock = 'Bottom'
@@ -2081,57 +2085,139 @@ function Show-DruidixDialog {
         if (-not $BodyColor) { $BodyColor = [System.Drawing.Color]::FromArgb(0x0E, 0x1E, 0x2E) }
         if (-not $BodyFont)  { $BodyFont  = New-Object System.Drawing.Font('Segoe UI', 10) }
 
-        # Sender header
-        $startSender = $chatRtb.TextLength
-        $chatRtb.AppendText("$Sender`r`n")
-        $chatRtb.Select($startSender, $chatRtb.TextLength - $startSender)
-        $chatRtb.SelectionColor = $SenderColor
-        $chatRtb.SelectionFont  = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
+        $isUser    = ($Sender -eq 'Vous')
+        $isSpecial = ($Sender -in @('Système', 'Confidentialité', 'Erreur'))
 
-        # Body text
-        $startBody = $chatRtb.TextLength
-        $chatRtb.AppendText("$Text`r`n`r`n")
-        $chatRtb.Select($startBody, $chatRtb.TextLength - $startBody)
-        $chatRtb.SelectionColor = $BodyColor
-        $chatRtb.SelectionFont  = $BodyFont
+        # Style selon le type de message
+        $showHeader = $true
+        if ($isUser) {
+            $bubbleBg   = [System.Drawing.Color]::FromArgb(0x1F, 0x4D, 0x3A)
+            $bubbleFg   = [System.Drawing.Color]::White
+            $headerFg   = [System.Drawing.Color]::FromArgb(0xF4, 0xEC, 0xD8)
+            $align      = 'Right'
+            $avatar     = ''
+            $showHeader = $false
+        }
+        elseif ($Sender -eq 'Erreur') {
+            $bubbleBg = [System.Drawing.Color]::FromArgb(0xFA, 0xE5, 0xE5)
+            $bubbleFg = [System.Drawing.Color]::FromArgb(0xB2, 0x3B, 0x3B)
+            $headerFg = [System.Drawing.Color]::FromArgb(0xB2, 0x3B, 0x3B)
+            $align    = 'Center'
+            $avatar   = [string]([char]0x26A0) + [string]([char]0xFE0F)
+        }
+        elseif ($Sender -eq 'Confidentialité') {
+            $bubbleBg = [System.Drawing.Color]::FromArgb(0xEC, 0xE5, 0xD0)
+            $bubbleFg = [System.Drawing.Color]::FromArgb(0x5A, 0x6B, 0x5F)
+            $headerFg = [System.Drawing.Color]::FromArgb(0xC8, 0xA4, 0x5C)
+            $align    = 'Center'
+            $avatar   = [char]::ConvertFromUtf32(0x1F512)
+        }
+        elseif ($isSpecial) {
+            # Système
+            $bubbleBg = [System.Drawing.Color]::FromArgb(0xEC, 0xE5, 0xD0)
+            $bubbleFg = [System.Drawing.Color]::FromArgb(0x5A, 0x6B, 0x5F)
+            $headerFg = [System.Drawing.Color]::FromArgb(0xC8, 0xA4, 0x5C)
+            $align    = 'Center'
+            $avatar   = [string]([char]0x2699) + [string]([char]0xFE0F)
+        }
+        else {
+            # L'Oeil d'Antavirus
+            $bubbleBg = [System.Drawing.Color]::FromArgb(0xFA, 0xF6, 0xEA)
+            $bubbleFg = [System.Drawing.Color]::FromArgb(0x0E, 0x1E, 0x2E)
+            $headerFg = [System.Drawing.Color]::FromArgb(0xC8, 0xA4, 0x5C)
+            $align    = 'Left'
+            $avatar   = [char]::ConvertFromUtf32(0x1F441) + [char]0xFE0F
+        }
 
-        # Reset cursor at end with no selection
-        $chatRtb.Select($chatRtb.TextLength, 0)
-        $chatRtb.ScrollToCaret()
+        # Largeurs
+        $availableW = $chatFlow.ClientSize.Width - 50
+        if ($availableW -lt 200) { $availableW = 400 }
+        $bubbleMaxW = [int]($availableW * 0.80)
+        $textInnerW = $bubbleMaxW - 32
+
+        # Mesure du texte (avec wrap)
+        $proposed = New-Object System.Drawing.Size($textInnerW, [int]::MaxValue)
+        $measured = [System.Windows.Forms.TextRenderer]::MeasureText($Text, $BodyFont, $proposed, [System.Windows.Forms.TextFormatFlags]::WordBreak)
+
+        $textW = [Math]::Min($textInnerW, $measured.Width)
+        $bubbleWidth = $textW + 32
+        if ($bubbleWidth -lt 140) { $bubbleWidth = 140 }
+        if ($bubbleWidth -gt $bubbleMaxW) { $bubbleWidth = $bubbleMaxW }
+
+        $hdrHeight = 0
+        if ($showHeader) { $hdrHeight = 26 }
+        $bubbleHeight = $hdrHeight + $measured.Height + 22
+
+        # Wrapper qui gere l'alignement gauche / centre / droite
+        $wrapper = New-Object System.Windows.Forms.Panel
+        $wrapper.Width = $availableW
+        $wrapper.Height = $bubbleHeight + 12
+        $wrapper.BackColor = $cBg
+        $wrapper.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 8)
+
+        # Bulle
+        $bubble = New-Object System.Windows.Forms.Panel
+        $bubble.Width = $bubbleWidth
+        $bubble.Height = $bubbleHeight
+        $bubble.BackColor = $bubbleBg
+        switch ($align) {
+            'Right'  { $bubble.Location = New-Object System.Drawing.Point(($wrapper.Width - $bubbleWidth - 4), 0) }
+            'Center' { $bubble.Location = New-Object System.Drawing.Point([int](($wrapper.Width - $bubbleWidth) / 2), 0) }
+            default  { $bubble.Location = New-Object System.Drawing.Point(4, 0) }
+        }
+
+        if ($showHeader) {
+            $headerText = if ($avatar) { "$avatar   $Sender" } else { $Sender }
+            $headerLabel = New-Object System.Windows.Forms.Label
+            $headerLabel.Text = $headerText
+            $headerLabel.Font = New-Object System.Drawing.Font('Segoe UI Emoji', 10.5, [System.Drawing.FontStyle]::Bold)
+            $headerLabel.UseCompatibleTextRendering = $true
+            $headerLabel.ForeColor = $headerFg
+            $headerLabel.Location = New-Object System.Drawing.Point(14, 7)
+            $headerLabel.AutoSize = $true
+            $headerLabel.BackColor = [System.Drawing.Color]::Transparent
+            $bubble.Controls.Add($headerLabel)
+        }
+
+        $textLabel = New-Object System.Windows.Forms.Label
+        $textLabel.Text = $Text
+        $textLabel.Font = $BodyFont
+        $textLabel.ForeColor = $bubbleFg
+        $textLabel.Location = New-Object System.Drawing.Point(14, ($hdrHeight + 6))
+        $textLabel.Size = New-Object System.Drawing.Size(($bubbleWidth - 28), $measured.Height)
+        $textLabel.AutoSize = $false
+        $textLabel.BackColor = [System.Drawing.Color]::Transparent
+        $textLabel.UseCompatibleTextRendering = $true
+        $bubble.Controls.Add($textLabel)
+
+        $wrapper.Controls.Add($bubble)
+
+        # Coins arrondis sur la bulle
+        Set-RoundedRegion -Button $bubble -Radius 14
+
+        $chatFlow.Controls.Add($wrapper)
+
+        # Auto-scroll vers le bas
+        try {
+            $chatFlow.PerformLayout()
+            if ($chatFlow.VerticalScroll.Visible) {
+                $chatFlow.VerticalScroll.Value = [Math]::Max(0, $chatFlow.VerticalScroll.Maximum)
+            }
+            $chatFlow.ScrollControlIntoView($wrapper)
+        } catch {}
+
+        return $wrapper
     }
 
-    $script:Druidix_ThinkingStart = -1
+    $script:Druidix_ThinkingPanel = $null
     $script:Druidix_RemoveThinking = {
-        # Approche 1 : par position memorisee
-        if ($script:Druidix_ThinkingStart -ge 0 -and $script:Druidix_ThinkingStart -le $chatRtb.TextLength) {
-            $end = $chatRtb.TextLength
-            $chatRtb.Select($script:Druidix_ThinkingStart, $end - $script:Druidix_ThinkingStart)
-            $chatRtb.SelectedText = ''
+        if ($script:Druidix_ThinkingPanel) {
+            try {
+                $chatFlow.Controls.Remove($script:Druidix_ThinkingPanel)
+                $script:Druidix_ThinkingPanel.Dispose()
+            } catch {}
+            $script:Druidix_ThinkingPanel = $null
         }
-        $script:Druidix_ThinkingStart = -1
-
-        # Approche 2 (defensive) : recherche textuelle au cas ou la position n'aurait pas marche
-        $marker = '... (reflexion en cours)'
-        $allText = $chatRtb.Text
-        $idx = $allText.LastIndexOf($marker)
-        if ($idx -ge 0) {
-            # Trouve "Druidix" qui precede (recherche en arriere)
-            $headerStart = -1
-            $patterns = @("L'Oeil d'Antavirus`r`n", "L'Oeil d'Antavirus`n")
-            foreach ($pat in $patterns) {
-                $found = $allText.LastIndexOf($pat, $idx)
-                if ($found -ge 0) { $headerStart = $found; break }
-            }
-            if ($headerStart -lt 0) { $headerStart = $idx }
-            # Calcul de la fin (jusqu'a la fin de la ligne suivante du marqueur)
-            $endIdx = $idx + $marker.Length
-            while ($endIdx -lt $allText.Length -and ($allText[$endIdx] -eq "`r" -or $allText[$endIdx] -eq "`n")) {
-                $endIdx++
-            }
-            $chatRtb.Select($headerStart, $endIdx - $headerStart)
-            $chatRtb.SelectedText = ''
-        }
-        $chatRtb.Select($chatRtb.TextLength, 0)
     }
 
     & $script:Druidix_AppendChat "L'Oeil d'Antavirus" "Bonjour ! Je suis l'Oeil d'Antavirus, l'assistant qui veille sur votre PC. Je peux vous expliquer le diagnostic et vous conseiller en mots simples.`r`n`r`nExemples : `"Pourquoi mon PC est lent ?`", `"C'est quoi ce 'redemarrage en attente' ?`", `"Quels programmes je peux desactiver au demarrage ?`"" $cBrand $cBodyText $fontBody
@@ -2172,8 +2258,7 @@ function Show-DruidixDialog {
         $tbInput.Text = ''
         $btnSend.Enabled = $false
         $tbInput.Enabled = $false
-        $thinkingStart = $chatRtb.TextLength
-        & $script:Druidix_AppendChat "L'Oeil d'Antavirus" '... (reflexion en cours)' $cBrand $cMuted $fontMutedItalic
+        $script:Druidix_ThinkingPanel = & $script:Druidix_AppendChat "L'Oeil d'Antavirus" '... (reflexion en cours)' $cBrand $cMuted $fontMutedItalic
         [System.Windows.Forms.Application]::DoEvents()
 
         # Read model override from settings
@@ -2182,45 +2267,14 @@ function Show-DruidixDialog {
             $modelOverride = $settings.Models[$providerId]
         }
 
-        # Closure pour supprimer le marqueur "reflexion en cours" — inline pour eviter tout pb de scope
-        $removeThinkingInline = {
-            param($Rtb, $StartPos)
-            try {
-                if ($StartPos -ge 0 -and $StartPos -le $Rtb.TextLength) {
-                    $Rtb.Select($StartPos, $Rtb.TextLength - $StartPos)
-                    $Rtb.SelectedText = ''
-                }
-            } catch {}
-            try {
-                $marker = '... (reflexion en cours)'
-                $allText = $Rtb.Text
-                $idx = $allText.LastIndexOf($marker)
-                if ($idx -ge 0) {
-                    $headerStart = -1
-                    foreach ($pat in @("L'Oeil d'Antavirus`r`n", "L'Oeil d'Antavirus`n")) {
-                        $found = $allText.LastIndexOf($pat, $idx)
-                        if ($found -ge 0) { $headerStart = $found; break }
-                    }
-                    if ($headerStart -lt 0) { $headerStart = $idx }
-                    $endIdx = $idx + $marker.Length
-                    while ($endIdx -lt $allText.Length -and ($allText[$endIdx] -eq "`r" -or $allText[$endIdx] -eq "`n")) {
-                        $endIdx++
-                    }
-                    $Rtb.Select($headerStart, $endIdx - $headerStart)
-                    $Rtb.SelectedText = ''
-                }
-            } catch {}
-            try { $Rtb.Select($Rtb.TextLength, 0) } catch {}
-        }
-
         try {
             $qAnon = ConvertTo-AnonymizedText $q
             $response = Invoke-DruidixApi -ProviderId $providerId -ApiKey $apiKey -SystemPrompt $systemPrompt -Question $qAnon -ModelOverride $modelOverride
-            & $removeThinkingInline $chatRtb $thinkingStart
+            & $script:Druidix_RemoveThinking
             & $script:Druidix_AppendChat "L'Oeil d'Antavirus" $response $cBrand $cBodyText $fontBody
         }
         catch {
-            & $removeThinkingInline $chatRtb $thinkingStart
+            & $script:Druidix_RemoveThinking
             $errMsg = $_.Exception.Message
             $hint = ''
             if ($errMsg -match '\(401\)|Unauthorized') {
@@ -2782,6 +2836,101 @@ function Show-OnboardingDialog {
     if ($script:OnboardingChoice -eq 'BYOK') {
         Show-SettingsDialog
     }
+}
+
+$script:UpdateRepoApi = 'https://api.github.com/repos/Jordan-Bourillot/le-druide-antavirus/releases/latest'
+
+function Get-CurrentAppVersion {
+    try {
+        $exe = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+        if ($exe -and ($exe -notlike '*powershell*')) {
+            $v = (Get-Item -LiteralPath $exe).VersionInfo.FileVersion
+            if ($v) { return $v }
+        }
+    } catch {}
+    return '0.0.0.0'
+}
+
+function Compare-AppVersion {
+    param([string]$Latest, [string]$Current)
+    try {
+        $lv = [version]($Latest -replace '^v', '')
+        $cv = [version]($Current -replace '^v', '')
+        return ($lv -gt $cv)
+    } catch { return $false }
+}
+
+function Start-UpdateCheck {
+    # Lance un check de mise a jour en arriere-plan. Quand termine, appelle
+    # $OnFound avec un objet @{Tag, Url, Body} si une nouvelle version existe.
+    param(
+        [Parameter(Mandatory)][scriptblock]$OnFound,
+        [string]$ApiUrl = $script:UpdateRepoApi
+    )
+    $current = Get-CurrentAppVersion
+    try {
+        $job = Start-Job -ScriptBlock {
+            param($url)
+            try {
+                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                $r = Invoke-RestMethod -Uri $url -Headers @{ 'User-Agent' = 'LeDruideAntavirus' } -TimeoutSec 8
+                return [PSCustomObject]@{
+                    Tag  = $r.tag_name
+                    Url  = $r.html_url
+                    Body = $r.body
+                    Date = $r.published_at
+                }
+            } catch { return $null }
+        } -ArgumentList $ApiUrl
+    } catch { return }
+
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = 800
+    $timer.Tag = @{ Job = $job; Current = $current; OnFound = $OnFound; Self = $timer }
+    $timer.Add_Tick({
+        try {
+            $ctx = $this.Tag
+            $j = $ctx.Job
+            if ($j.State -in @('Completed','Failed','Stopped')) {
+                $this.Stop()
+                try {
+                    $result = $null
+                    if ($j.State -eq 'Completed') {
+                        $result = Receive-Job -Job $j -ErrorAction SilentlyContinue
+                    }
+                    Remove-Job -Job $j -Force -ErrorAction SilentlyContinue
+                    if ($result -and $result.Tag) {
+                        if (Compare-AppVersion -Latest $result.Tag -Current $ctx.Current) {
+                            try { & $ctx.OnFound $result } catch {}
+                        }
+                    }
+                } catch {}
+                try { $this.Dispose() } catch {}
+            }
+        } catch {}
+    })
+    $timer.Start()
+}
+
+function Set-RoundedRegion {
+    param(
+        [Parameter(Mandatory)]$Button,
+        [int]$Radius = 8
+    )
+    try {
+        $gp = New-Object System.Drawing.Drawing2D.GraphicsPath
+        $r = $Radius * 2
+        $w = $Button.Width
+        $h = $Button.Height
+        if ($r -gt $w) { $r = $w }
+        if ($r -gt $h) { $r = $h }
+        $gp.AddArc(0, 0, $r, $r, 180, 90)
+        $gp.AddArc($w - $r, 0, $r, $r, 270, 90)
+        $gp.AddArc($w - $r, $h - $r, $r, $r, 0, 90)
+        $gp.AddArc(0, $h - $r, $r, $r, 90, 90)
+        $gp.CloseFigure()
+        $Button.Region = New-Object System.Drawing.Region($gp)
+    } catch {}
 }
 
 function Get-DruideLogo {
@@ -3475,38 +3624,42 @@ function Show-DiagnosticGui {
 
     $btnScheduleHeader = New-Object System.Windows.Forms.Button
     $btnScheduleHeader.Text = 'Planifier'
-    $btnScheduleHeader.Size = New-Object System.Drawing.Size(110, 34)
-    $btnScheduleHeader.Location = New-Object System.Drawing.Point(640, 33)
+    $btnScheduleHeader.Size = New-Object System.Drawing.Size(110, 36)
+    $btnScheduleHeader.Location = New-Object System.Drawing.Point(640, 32)
     $btnScheduleHeader.FlatStyle = 'Flat'
     $btnScheduleHeader.BackColor = [System.Drawing.Color]::FromArgb(0x1F, 0x4D, 0x3A)
     $btnScheduleHeader.ForeColor = [System.Drawing.Color]::White
     $btnScheduleHeader.FlatAppearance.BorderSize = 0
     $btnScheduleHeader.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(0x2E, 0x6B, 0x4F)
+    $btnScheduleHeader.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(0x15, 0x37, 0x28)
     $btnScheduleHeader.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
     $btnScheduleHeader.Cursor = [System.Windows.Forms.Cursors]::Hand
     $btnScheduleHeader.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
     $btnScheduleHeader.Add_Click({ Show-ScheduleDialog })
     $headerPanel.Controls.Add($btnScheduleHeader)
+    Set-RoundedRegion -Button $btnScheduleHeader -Radius 10
 
     $btnSettingsHeader = New-Object System.Windows.Forms.Button
     $btnSettingsHeader.Text = 'Paramètres'
-    $btnSettingsHeader.Size = New-Object System.Drawing.Size(120, 34)
-    $btnSettingsHeader.Location = New-Object System.Drawing.Point(760, 33)
+    $btnSettingsHeader.Size = New-Object System.Drawing.Size(120, 36)
+    $btnSettingsHeader.Location = New-Object System.Drawing.Point(760, 32)
     $btnSettingsHeader.FlatStyle = 'Flat'
     $btnSettingsHeader.BackColor = [System.Drawing.Color]::FromArgb(0xC8, 0xA4, 0x5C)
     $btnSettingsHeader.ForeColor = [System.Drawing.Color]::White
     $btnSettingsHeader.FlatAppearance.BorderSize = 0
     $btnSettingsHeader.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(0xD4, 0xB6, 0x6A)
+    $btnSettingsHeader.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(0xB8, 0x94, 0x4C)
     $btnSettingsHeader.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
     $btnSettingsHeader.Cursor = [System.Windows.Forms.Cursors]::Hand
     $btnSettingsHeader.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
     $btnSettingsHeader.Add_Click({ Show-SettingsDialog })
     $headerPanel.Controls.Add($btnSettingsHeader)
+    Set-RoundedRegion -Button $btnSettingsHeader -Radius 10
 
     # ========== FOOTER ==========
     $footerPanel = New-Object System.Windows.Forms.Panel
     $footerPanel.Dock = 'Bottom'
-    $footerPanel.Height = 56
+    $footerPanel.Height = 64
     $footerPanel.BackColor = $cCard
     $footerPanel.Add_Paint({
         param($s, $e)
@@ -3518,70 +3671,108 @@ function Show-DiagnosticGui {
     $btnTechnical = New-Object System.Windows.Forms.Button
     $btnTechnical.Text = 'Vue technique'
     $btnTechnical.Location = New-Object System.Drawing.Point(20, 12)
-    $btnTechnical.Size = New-Object System.Drawing.Size(130, 32)
+    $btnTechnical.Size = New-Object System.Drawing.Size(130, 36)
     $btnTechnical.FlatStyle = 'Flat'
-    $btnTechnical.BackColor = $cCard
+    $btnTechnical.BackColor = $cBg
     $btnTechnical.ForeColor = $cText
-    $btnTechnical.FlatAppearance.BorderColor = $cAccent
+    $btnTechnical.FlatAppearance.BorderSize = 0
     $btnTechnical.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(0xEC, 0xE5, 0xD0)
+    $btnTechnical.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(0xD8, 0xCF, 0xB8)
     $btnTechnical.Font = New-Object System.Drawing.Font('Segoe UI', 9.5, [System.Drawing.FontStyle]::Bold)
     $btnTechnical.Cursor = [System.Windows.Forms.Cursors]::Hand
     $btnTechnical.Enabled = $false
     $footerPanel.Controls.Add($btnTechnical)
+    Set-RoundedRegion -Button $btnTechnical -Radius 10
 
     $btnReport = New-Object System.Windows.Forms.Button
     $btnReport.Text = 'Historique'
     $btnReport.Location = New-Object System.Drawing.Point(160, 12)
-    $btnReport.Size = New-Object System.Drawing.Size(130, 32)
+    $btnReport.Size = New-Object System.Drawing.Size(130, 36)
     $btnReport.FlatStyle = 'Flat'
-    $btnReport.BackColor = $cCard
+    $btnReport.BackColor = $cBg
     $btnReport.ForeColor = $cText
-    $btnReport.FlatAppearance.BorderColor = $cAccent
+    $btnReport.FlatAppearance.BorderSize = 0
     $btnReport.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(0xEC, 0xE5, 0xD0)
+    $btnReport.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(0xD8, 0xCF, 0xB8)
     $btnReport.Font = New-Object System.Drawing.Font('Segoe UI', 9.5, [System.Drawing.FontStyle]::Bold)
     $btnReport.Cursor = [System.Windows.Forms.Cursors]::Hand
     $btnReport.Enabled = $true
     $footerPanel.Controls.Add($btnReport)
+    Set-RoundedRegion -Button $btnReport -Radius 10
 
     $btnHome = New-Object System.Windows.Forms.Button
     $btnHome.Text = [char]0x2190 + ' Accueil'
     $btnHome.Location = New-Object System.Drawing.Point(300, 12)
-    $btnHome.Size = New-Object System.Drawing.Size(110, 32)
+    $btnHome.Size = New-Object System.Drawing.Size(110, 36)
     $btnHome.FlatStyle = 'Flat'
-    $btnHome.BackColor = $cCard
+    $btnHome.BackColor = $cBg
     $btnHome.ForeColor = $cText
-    $btnHome.FlatAppearance.BorderColor = $cAccent
+    $btnHome.FlatAppearance.BorderSize = 0
     $btnHome.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(0xEC, 0xE5, 0xD0)
+    $btnHome.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(0xD8, 0xCF, 0xB8)
     $btnHome.Font = New-Object System.Drawing.Font('Segoe UI', 9.5, [System.Drawing.FontStyle]::Bold)
     $btnHome.Cursor = [System.Windows.Forms.Cursors]::Hand
     $btnHome.Enabled = $false
     $footerPanel.Controls.Add($btnHome)
+    Set-RoundedRegion -Button $btnHome -Radius 10
 
     $btnRerun = New-Object System.Windows.Forms.Button
     $btnRerun.Text = 'Relancer'
     $btnRerun.Location = New-Object System.Drawing.Point(420, 12)
-    $btnRerun.Size = New-Object System.Drawing.Size(110, 32)
+    $btnRerun.Size = New-Object System.Drawing.Size(110, 36)
     $btnRerun.FlatStyle = 'Flat'
-    $btnRerun.BackColor = $cCard
+    $btnRerun.BackColor = $cBg
     $btnRerun.ForeColor = $cText
-    $btnRerun.FlatAppearance.BorderColor = $cAccent
+    $btnRerun.FlatAppearance.BorderSize = 0
     $btnRerun.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(0xEC, 0xE5, 0xD0)
+    $btnRerun.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(0xD8, 0xCF, 0xB8)
     $btnRerun.Font = New-Object System.Drawing.Font('Segoe UI', 9.5, [System.Drawing.FontStyle]::Bold)
     $btnRerun.Cursor = [System.Windows.Forms.Cursors]::Hand
     $btnRerun.Enabled = $false
     $footerPanel.Controls.Add($btnRerun)
+    Set-RoundedRegion -Button $btnRerun -Radius 10
 
+    $btnQuit = New-Object System.Windows.Forms.Button
+    $btnQuit.Text = 'Fermer'
+    $btnQuit.Location = New-Object System.Drawing.Point(770, 12)
+    $btnQuit.Size = New-Object System.Drawing.Size(100, 36)
+    $btnQuit.FlatStyle = 'Flat'
+    $btnQuit.BackColor = $cBg
+    $btnQuit.ForeColor = $cText
+    $btnQuit.FlatAppearance.BorderSize = 0
+    $btnQuit.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(0xEC, 0xE5, 0xD0)
+    $btnQuit.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(0xD8, 0xCF, 0xB8)
+    $btnQuit.Font = New-Object System.Drawing.Font('Segoe UI', 9.5, [System.Drawing.FontStyle]::Bold)
+    $btnQuit.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $footerPanel.Controls.Add($btnQuit)
+    Set-RoundedRegion -Button $btnQuit -Radius 10
+
+    # ========== BOUTON FLOTTANT (FAB) : Assistant L'Oeil d'Antavirus ==========
+    # Bouton rond dore, attache au form (au-dessus du contentPanel et du footer),
+    # avec animation de pulsation pour signaler qu'il s'agit de l'assistant IA.
     $btnDruidix = New-Object System.Windows.Forms.Button
-    $btnDruidix.Text = "Demander a l'Oeil"
-    $btnDruidix.Location = New-Object System.Drawing.Point(540, 12)
-    $btnDruidix.Size = New-Object System.Drawing.Size(180, 32)
+    $btnDruidix.Text = [char]::ConvertFromUtf32(0x1F441) + [char]0xFE0F
+    $btnDruidix.Size = New-Object System.Drawing.Size(76, 76)
     $btnDruidix.FlatStyle = 'Flat'
     $btnDruidix.BackColor = $cBrand
     $btnDruidix.ForeColor = [System.Drawing.Color]::White
     $btnDruidix.FlatAppearance.BorderSize = 0
     $btnDruidix.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(0xD4, 0xB6, 0x6A)
-    $btnDruidix.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
+    $btnDruidix.Font = New-Object System.Drawing.Font('Segoe UI Emoji', 26, [System.Drawing.FontStyle]::Bold)
+    $btnDruidix.UseCompatibleTextRendering = $true
+    $btnDruidix.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
     $btnDruidix.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $btnDruidix.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
+    # Forme circulaire
+    try {
+        $gp = New-Object System.Drawing.Drawing2D.GraphicsPath
+        $gp.AddEllipse(0, 0, 76, 76)
+        $btnDruidix.Region = New-Object System.Drawing.Region($gp)
+    } catch {}
+    # Tooltip pour expliquer ce que c'est
+    $druidixTooltip = New-Object System.Windows.Forms.ToolTip
+    $druidixTooltip.InitialDelay = 200
+    $druidixTooltip.SetToolTip($btnDruidix, "L'Oeil d'Antavirus - assistant IA qui vous explique le diagnostic en mots simples")
     $btnDruidix.Add_Click({
         $auto = $null
         if ($script:Findings -and $script:Findings.Count -gt 0) {
@@ -3589,21 +3780,42 @@ function Show-DiagnosticGui {
         }
         Show-DruidixDialog -InitialQuestion $auto
     })
-    $footerPanel.Controls.Add($btnDruidix)
+    $form.Controls.Add($btnDruidix)
+    $btnDruidix.BringToFront()
 
-    $btnQuit = New-Object System.Windows.Forms.Button
-    $btnQuit.Text = 'Fermer'
-    $btnQuit.Location = New-Object System.Drawing.Point(770, 12)
-    $btnQuit.Size = New-Object System.Drawing.Size(100, 32)
-    $btnQuit.FlatStyle = 'Flat'
-    $btnQuit.BackColor = $cCard
-    $btnQuit.ForeColor = $cText
-    $btnQuit.FlatAppearance.BorderColor = $cAccent
-    $btnQuit.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(0xEC, 0xE5, 0xD0)
-    $btnQuit.Font = New-Object System.Drawing.Font('Segoe UI', 9.5, [System.Drawing.FontStyle]::Bold)
-    $btnQuit.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
-    $btnQuit.Cursor = [System.Windows.Forms.Cursors]::Hand
-    $footerPanel.Controls.Add($btnQuit)
+    # Animation : alternance Or <-> Vert pour signaler que c'est l'assistant
+    # (changement de teinte plus marque qu'une simple pulsation Or/Or clair)
+    $druidixGlowTimer = New-Object System.Windows.Forms.Timer
+    $druidixGlowTimer.Interval = 40
+    $script:Druidix_GlowPhase = 0
+    $druidixGlowTimer.Add_Tick({
+        try {
+            $script:Druidix_GlowPhase = ($script:Druidix_GlowPhase + 1) % 100
+            # sinus 0..1 sur 100 ticks (4 secondes par cycle complet)
+            $t = (1.0 - [Math]::Cos($script:Druidix_GlowPhase * [Math]::PI / 50.0)) / 2.0
+            # Or (200, 164, 92) -> Vert sage (46, 107, 79)
+            $r  = [int](200 + (46 - 200) * $t)
+            $gr = [int](164 + (107 - 164) * $t)
+            $b  = [int](92 + (79 - 92) * $t)
+            $btnDruidix.BackColor = [System.Drawing.Color]::FromArgb($r, $gr, $b)
+
+            # Pulsation legere de taille (76 <-> 82) pour effet "respiration"
+            $newSize = 76 + [int](6 * $t)
+            if ($btnDruidix.Width -ne $newSize) {
+                $delta = [int](($newSize - $btnDruidix.Width) / 2)
+                $oldX = $btnDruidix.Left
+                $oldY = $btnDruidix.Top
+                $btnDruidix.Size = New-Object System.Drawing.Size($newSize, $newSize)
+                $btnDruidix.Location = New-Object System.Drawing.Point(($oldX - $delta), ($oldY - $delta))
+                try {
+                    $gp2 = New-Object System.Drawing.Drawing2D.GraphicsPath
+                    $gp2.AddEllipse(0, 0, $newSize, $newSize)
+                    $btnDruidix.Region = New-Object System.Drawing.Region($gp2)
+                } catch {}
+            }
+        } catch {}
+    })
+    $druidixGlowTimer.Start()
 
     # ========== ZONE PRINCIPALE ==========
     $contentPanel = New-Object System.Windows.Forms.Panel
@@ -3638,16 +3850,17 @@ function Show-DiagnosticGui {
 
     $btnAnalyze = New-Object System.Windows.Forms.Button
     $btnAnalyze.Text = 'Analyser mon PC'
-    $btnAnalyze.Size = New-Object System.Drawing.Size(280, 60)
+    $btnAnalyze.Size = New-Object System.Drawing.Size(300, 64)
     $btnAnalyze.FlatStyle = 'Flat'
     $btnAnalyze.BackColor = $cAccent
     $btnAnalyze.ForeColor = [System.Drawing.Color]::White
     $btnAnalyze.FlatAppearance.BorderSize = 0
     $btnAnalyze.FlatAppearance.MouseOverBackColor = $cAccentHover
     $btnAnalyze.FlatAppearance.MouseDownBackColor = $cAccentDown
-    $btnAnalyze.Font = New-Object System.Drawing.Font('Segoe UI', 13, [System.Drawing.FontStyle]::Bold)
+    $btnAnalyze.Font = New-Object System.Drawing.Font('Segoe UI', 14, [System.Drawing.FontStyle]::Bold)
     $btnAnalyze.Cursor = [System.Windows.Forms.Cursors]::Hand
     $initialView.Controls.Add($btnAnalyze)
+    Set-RoundedRegion -Button $btnAnalyze -Radius 18
 
     $initInfoLabel = New-Object System.Windows.Forms.Label
     $initInfoLabel.Text = "Environ 30 secondes      Lecture seule, aucune modification"
@@ -3667,15 +3880,17 @@ function Show-DiagnosticGui {
 
     $btnExpress = New-Object System.Windows.Forms.Button
     $btnExpress.Text = "Scan express (15s)"
-    $btnExpress.Size = New-Object System.Drawing.Size(180, 36)
+    $btnExpress.Size = New-Object System.Drawing.Size(200, 40)
     $btnExpress.FlatStyle = 'Flat'
-    $btnExpress.BackColor = $cCard
-    $btnExpress.ForeColor = $cText
-    $btnExpress.FlatAppearance.BorderColor = $cAccent
+    $btnExpress.BackColor = [System.Drawing.Color]::White
+    $btnExpress.ForeColor = $cAccent
+    $btnExpress.FlatAppearance.BorderSize = 0
     $btnExpress.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(0xEC, 0xE5, 0xD0)
-    $btnExpress.Font = New-Object System.Drawing.Font('Segoe UI', 9.5)
+    $btnExpress.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(0xD8, 0xCF, 0xB8)
+    $btnExpress.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
     $btnExpress.Cursor = [System.Windows.Forms.Cursors]::Hand
     $initialView.Controls.Add($btnExpress)
+    Set-RoundedRegion -Button $btnExpress -Radius 14
 
     $initialView.Add_Resize({
         $cw = $initialView.ClientSize.Width
@@ -3718,6 +3933,39 @@ function Show-DiagnosticGui {
     } catch {}
     $runningView.Controls.Add($scanIconLabel)
 
+    # Pre-compilation des frames de l'animation "piece sur une table"
+    # On precalcule 72 frames (un tour complet, 5 degres par frame) une seule
+    # fois, pour que le timer ne fasse plus que swap (ultra rapide, garde
+    # l'animation fluide meme entre deux checks lents).
+    $script:Druidix_ScanFrames = @()
+    if ($script:Druidix_ScanSourceBmp) {
+        $src = $script:Druidix_ScanSourceBmp
+        $w = $src.Width
+        $h = $src.Height
+        for ($i = 0; $i -lt 72; $i++) {
+            $rad = $i * 5 * [Math]::PI / 180.0
+            $cos = [Math]::Cos($rad)
+            $absCos = [Math]::Max(0.06, [Math]::Abs($cos))
+            $newW = [int]($w * $absCos)
+            if ($newW -lt 4) { $newW = 4 }
+            $x = [int](($w - $newW) / 2)
+            $bmp = New-Object System.Drawing.Bitmap($w, $h)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+            if ($cos -ge 0) {
+                $g.DrawImage($src, $x, 0, $newW, $h)
+            } else {
+                $g.TranslateTransform([float]($w / 2.0), 0)
+                $g.ScaleTransform(-1.0, 1.0)
+                $g.TranslateTransform([float](-$w / 2.0), 0)
+                $g.DrawImage($src, $x, 0, $newW, $h)
+            }
+            $g.Dispose()
+            $script:Druidix_ScanFrames += $bmp
+        }
+    }
+
     # Barre de progression custom (indigo Triskell) au lieu du ProgressBar Windows vert
     $progressBarFrame = New-Object System.Windows.Forms.Panel
     $progressBarFrame.Size = New-Object System.Drawing.Size(440, 8)
@@ -3752,40 +4000,15 @@ function Show-DiagnosticGui {
     $runningView.Controls.Add($progressPercent)
 
     # Animation : medaillon qui tourne sur son axe vertical (piece sur une table)
+    # Les frames sont precalculees, le timer ne fait qu'un swap d'image -> tres rapide.
     $scanTimer = New-Object System.Windows.Forms.Timer
-    $scanTimer.Interval = 50
-    $script:Druidix_ScanAngle = 0
+    $scanTimer.Interval = 40
+    $script:Druidix_ScanIdx = 0
     $scanTimer.Add_Tick({
         try {
-            $src = $script:Druidix_ScanSourceBmp
-            if (-not $src) { return }
-            $script:Druidix_ScanAngle = ($script:Druidix_ScanAngle + 5) % 360
-            $rad = [double]$script:Druidix_ScanAngle * [Math]::PI / 180.0
-            $cos = [Math]::Cos($rad)
-            $absCos = [Math]::Max(0.06, [Math]::Abs($cos))
-            $w = $src.Width
-            $h = $src.Height
-            $newW = [int]($w * $absCos)
-            if ($newW -lt 4) { $newW = 4 }
-            $x = [int](($w - $newW) / 2)
-            $bmp = New-Object System.Drawing.Bitmap($w, $h)
-            $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-            $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-            if ($cos -ge 0) {
-                $g.DrawImage($src, $x, 0, $newW, $h)
-            } else {
-                # Pile de la piece : image inversee horizontalement
-                $g.TranslateTransform([float]($w / 2.0), 0)
-                $g.ScaleTransform(-1.0, 1.0)
-                $g.TranslateTransform([float](-$w / 2.0), 0)
-                $g.DrawImage($src, $x, 0, $newW, $h)
-            }
-            $g.Dispose()
-            $old = $scanIconLabel.Image
-            $scanIconLabel.Image = $bmp
-            if ($old -and -not [object]::ReferenceEquals($old, $src)) {
-                try { $old.Dispose() } catch {}
+            if ($script:Druidix_ScanFrames -and $script:Druidix_ScanFrames.Count -gt 0) {
+                $script:Druidix_ScanIdx = ($script:Druidix_ScanIdx + 1) % $script:Druidix_ScanFrames.Count
+                $scanIconLabel.Image = $script:Druidix_ScanFrames[$script:Druidix_ScanIdx]
             }
         } catch {}
     })
@@ -3897,6 +4120,31 @@ function Show-DiagnosticGui {
     $contentPanel.Controls.Add($resultsView)
     $contentPanel.Controls.Add($runningView)
     $contentPanel.Controls.Add($initialView)
+
+    # Bandeau de mise a jour (visible seulement si nouvelle version detectee)
+    $updateBanner = New-Object System.Windows.Forms.Panel
+    $updateBanner.Dock = 'Top'
+    $updateBanner.Height = 44
+    $updateBanner.BackColor = [System.Drawing.Color]::FromArgb(0xC8, 0xA4, 0x5C)
+    $updateBanner.Visible = $false
+    $updateBanner.Cursor = [System.Windows.Forms.Cursors]::Hand
+
+    $updateBannerLabel = New-Object System.Windows.Forms.Label
+    $updateBannerLabel.Dock = 'Fill'
+    $updateBannerLabel.TextAlign = 'MiddleCenter'
+    $updateBannerLabel.Font = New-Object System.Drawing.Font('Segoe UI', 10.5, [System.Drawing.FontStyle]::Bold)
+    $updateBannerLabel.ForeColor = [System.Drawing.Color]::White
+    $updateBannerLabel.Text = ''
+    $updateBannerLabel.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $updateBanner.Controls.Add($updateBannerLabel)
+
+    $script:UpdateBannerUrl = $null
+    $openUpdateUrl = { if ($script:UpdateBannerUrl) { try { Start-Process $script:UpdateBannerUrl } catch {} } }
+    $updateBanner.Add_Click($openUpdateUrl)
+    $updateBannerLabel.Add_Click($openUpdateUrl)
+
+    # Ajout en dernier dans le contentPanel pour qu'il soit en haut (Dock layout inverse)
+    $contentPanel.Controls.Add($updateBanner)
 
     # Empilage des panels du form (Fill ajouté en premier, puis Bottom, puis Top)
     $form.Controls.Add($contentPanel)
@@ -4019,20 +4267,57 @@ function Show-DiagnosticGui {
 
     $btnQuit.Add_Click({ $form.Close() })
 
-    # Repositionnement explicite des boutons ancrés à droite
-    # (le Anchor=Right de WinForms ne s'applique pas toujours correctement
-    # quand le parent panel est Dock=Top/Bottom dans certains scénarios)
+    # Repositionnement explicite des boutons header (ancrage Right capricieux en WinForms)
+    # + centrage des boutons du footer + FAB en bas-droite
     $repositionAnchored = {
         try {
             $fw = $form.ClientSize.Width
+            $fh = $form.ClientSize.Height
             if ($fw -lt 800) { $fw = 800 }
+            if ($fh -lt 600) { $fh = 600 }
+
+            # Boutons header : alignés à droite
             $btnScheduleHeader.Location = New-Object System.Drawing.Point(($fw - 260), 33)
             $btnSettingsHeader.Location = New-Object System.Drawing.Point(($fw - 140), 33)
-            $btnQuit.Location           = New-Object System.Drawing.Point(($fw - 120), 12)
+
+            # Centrage des 5 boutons du footer
+            # Tailles : 130 + 130 + 110 + 110 + 100 = 580, gaps 14*4 = 56 -> total 636
+            $gap = 14
+            $w1 = 130; $w2 = 130; $w3 = 110; $w4 = 110; $w5 = 100
+            $total = $w1 + $gap + $w2 + $gap + $w3 + $gap + $w4 + $gap + $w5
+            $startX = [int](($fw - $total) / 2)
+            $y = 14
+            $btnTechnical.Location = New-Object System.Drawing.Point($startX, $y)
+            $x = $startX + $w1 + $gap
+            $btnReport.Location    = New-Object System.Drawing.Point($x, $y)
+            $x = $x + $w2 + $gap
+            $btnHome.Location      = New-Object System.Drawing.Point($x, $y)
+            $x = $x + $w3 + $gap
+            $btnRerun.Location     = New-Object System.Drawing.Point($x, $y)
+            $x = $x + $w4 + $gap
+            $btnQuit.Location      = New-Object System.Drawing.Point($x, $y)
+
+            # FAB "L'Oeil d'Antavirus" en bas-droite (flottant, chevauche le footer)
+            $fabMargin = 22
+            $btnDruidix.Location = New-Object System.Drawing.Point(($fw - 76 - $fabMargin), ($fh - 76 - $fabMargin))
+            $btnDruidix.BringToFront()
         } catch {}
     }
     $form.Add_Shown($repositionAnchored)
     $form.Add_Resize($repositionAnchored)
+
+    # Check de mise a jour en arriere-plan, au demarrage uniquement
+    $form.Add_Shown({
+        try {
+            Start-UpdateCheck -OnFound {
+                param($release)
+                $script:UpdateBannerUrl = $release.Url
+                $tag = $release.Tag
+                $updateBannerLabel.Text = "Nouvelle version $tag disponible - Cliquez pour la telecharger"
+                $updateBanner.Visible = $true
+            }
+        } catch {}
+    })
 
     [void]$form.ShowDialog()
 }

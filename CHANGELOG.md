@@ -2,6 +2,27 @@
 
 Les changements notables sont documentés ici. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le versionnage respecte [SemVer](https://semver.org/lang/fr/).
 
+## [1.3.1] - 2026-05-11
+
+### Ajouté
+- **Chat de L'Œil d'Antavirus en bulles arrondies** : refonte complète du chat de l'assistant IA en `FlowLayoutPanel` avec bulles distinctes (L'Œil à gauche en crème, Vous à droite en vert sombre, Système/Confidentialité/Erreur centrés avec emojis dédiés). Calcul de hauteur via `TextRenderer.MeasureText` pour wrap propre. Coins arrondis 14 px.
+- **Auto-update GitHub Releases au démarrage** : appel asynchrone à `api.github.com/repos/Jordan-Bourillot/le-druide-antavirus/releases/latest` (timeout 8 s, non bloquant via `Start-Job`). Si nouvelle version disponible, bandeau or doré sous le header avec lien cliquable vers la page Release.
+- **Bouton flottant L'Œil (FAB) animé** : sorti du footer, attaché au form en bas-droite, circulaire (76 × 76). Animation de pulsation **Or ↔ Vert sage** (cycle 4 s, interpolation sinusoïdale) + **respiration de taille** (76 → 82 → 76 px synchronisée). Effet "appel à l'action" sans agression.
+- **Coins arrondis sur tous les boutons** : nouvelle fonction `Set-RoundedRegion` qui applique une `Region` arrondie à n'importe quel `Button`. Appliquée au footer (10 px), header (10 px), Analyser mon PC (18 px, style pill), Scan express (14 px).
+- **Footer centré** : les 5 boutons (Vue technique / Historique / Accueil / Relancer / Fermer) sont centrés horizontalement dans le footer via le handler `$repositionAnchored` qui calcule la position selon la largeur courante.
+
+### Modifié
+- Boutons header en couleurs solides : Planifier (vert sombre) + Paramètres (or). Plus d'invisibilité blanc-sur-blanc.
+- Footer height 56 → 64 px pour aérer les boutons (hauteur 32 → 36 px).
+- Animation pendant scan : druide qui tourne comme une **pièce sur une table** (rotation sur l'axe vertical, effet face/pile) au lieu d'une pulsation. 72 frames pré-calculées + timer 40 ms pour fluidité maximale.
+- "Mon plan" → "Demander à l'Œil" pour clarifier ce que fait le bouton (ouvre l'assistant IA).
+
+### Corrigé
+- Logo héraldique : remplacement du base64 obsolète (oscilloscope violet) par le PNG officiel du druide (256 × 256) embarqué dans le binaire.
+- Boutons header Planifier + Paramètres : repositionnement explicite via `Form.Add_Shown` / `Add_Resize` (contournement d'un bug d'ancrage Right de WinForms quand le parent est `Dock=Top`).
+- Tutoiements oubliés dans le chat (`Va dans` → `Allez dans`, `Re-saisis-la` → `Re-saisissez-la`, `Attends/change` → `Patientez/changez`).
+- Animation du druide pendant scan : précalcul des frames + `DoEvents()` systématique en début et fin de chaque `Invoke-Check` → reste fluide entre les sections (limite intrinsèque PowerShell : un check synchrone très lent comme `Get-WinEvent` peut encore figer brièvement).
+
 ## [1.2.6] - 2026-05-11
 
 ### Modifié
