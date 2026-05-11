@@ -2,6 +2,11 @@
 
 Les changements notables sont documentés ici. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le versionnage respecte [SemVer](https://semver.org/lang/fr/).
 
+## [1.4.1] - 2026-05-11
+
+### Corrigé
+- **Installateur — erreur 740 à la fin de l'installation** : le binaire Le Druide nécessite les droits administrateur (Defender API), mais le post-install "Lancer maintenant" du wizard tentait un `CreateProcess` direct (sans escalade UAC possible). Ajout du flag `shellexec` au step `[Run]` de l'installateur, ce qui permet à Windows de proposer l'élévation UAC normalement. Le binaire applicatif est inchangé fonctionnellement vs v1.4.0.
+
 ## [1.4.0] - 2026-05-11
 
 ### Ajouté

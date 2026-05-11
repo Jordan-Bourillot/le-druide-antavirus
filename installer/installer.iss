@@ -4,7 +4,7 @@
 ; L'exécutable lui-même demande l'élévation au lancement (requireAdmin via ps2exe).
 
 #define MyAppName          "Le Druide Antavirus"
-#define MyAppVersion       "1.4.0"
+#define MyAppVersion       "1.4.1"
 #define MyAppPublisher     "Triskell Studio"
 #define MyAppURL           "https://antavirus.fr"
 #define MyAppSupportEmail  "contact@antavirus.fr"
@@ -68,4 +68,6 @@ Name: "{group}\Désinstaller {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Lancer {#MyAppName} maintenant"; Flags: nowait postinstall skipifsilent unchecked
+; shellexec : permet l'élévation UAC car le binaire requiert les droits admin
+; (ps2exe -requireAdmin). Sans ce flag, CreateProcess échoue avec code 740.
+Filename: "{app}\{#MyAppExeName}"; Description: "Lancer {#MyAppName} maintenant"; Flags: shellexec nowait postinstall skipifsilent unchecked
