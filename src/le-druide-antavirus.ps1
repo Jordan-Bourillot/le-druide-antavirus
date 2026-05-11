@@ -4339,8 +4339,8 @@ function Show-DiagnosticGui {
     $cardW = 362
     $cardH = 108
 
-    $scanCard = & $newActionCard ([char]::ConvertFromUtf32(0x1F50D)) "Scanner mon PC" "Diagnostic complet  -  environ 30 sec" $true  $cardW $cardH
-    $exprCard = & $newActionCard ([char]0x26A1)                       "Scan express"    "Verification rapide  -  15 sec"        $false $cardW $cardH
+    $scanCard = & $newActionCard ([char]::ConvertFromUtf32(0x1F50D)) "Diagnostic standard" "Securite, disque, memoire, navigateurs  -  30 sec" $true  $cardW $cardH
+    $exprCard = & $newActionCard ([char]0x26A1)                       "Diagnostic rapide"   "Verifications essentielles uniquement  -  15 sec"  $false $cardW $cardH
     $planCard = & $newActionCard ([char]::ConvertFromUtf32(0x1F4C5))  "Planifier"       "Scan automatique hebdomadaire"         $false $cardW $cardH
     $histCard = & $newActionCard ([char]::ConvertFromUtf32(0x1F4C2))  "Historique"      "Consulter vos rapports precedents"     $false $cardW $cardH
 
@@ -4365,7 +4365,7 @@ function Show-DiagnosticGui {
 
     # ====== Bas de page : mode complet + rassurance ======
     $chkFullCard = New-Object System.Windows.Forms.CheckBox
-    $chkFullCard.Text = "Mode complet (plus long, verifie aussi les mises a jour Windows)"
+    $chkFullCard.Text = "Inclure la recherche des mises a jour Windows (ajoute ~30 sec)"
     $chkFullCard.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     $chkFullCard.ForeColor = $cTextMuted
     $chkFullCard.AutoSize = $true
@@ -4658,7 +4658,33 @@ function Show-DiagnosticGui {
     $updateBanner.Controls.Add($updateBannerLabel)
 
     $script:UpdateBannerUrl = $null
-    $openUpdateUrl = { if ($script:UpdateBannerUrl) { try { Start-Process $script:UpdateBannerUrl } catch {} } }
+    $script:UpdateBannerTag = $null
+
+    # v1.4.6 : telechargement direct de l'installateur (pas de redirection GitHub).
+    # On telecharge le Setup.exe dans %TEMP% puis on le lance directement.
+    $openUpdateUrl = {
+        if (-not $script:UpdateBannerUrl) { return }
+        try {
+            $updateBanner.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+            $updateBannerLabel.Text = "Telechargement de la mise a jour en cours..."
+            [System.Windows.Forms.Application]::DoEvents()
+
+            $tempPath = Join-Path $env:TEMP ("LeDruideAntavirus-Setup-Update-" + $script:UpdateBannerTag + ".exe")
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $script:UpdateBannerUrl -OutFile $tempPath -UseBasicParsing -ErrorAction Stop
+
+            $updateBannerLabel.Text = "Mise a jour telechargee. Lancement de l'installateur..."
+            [System.Windows.Forms.Application]::DoEvents()
+            Start-Sleep -Milliseconds 400
+
+            # Lance l'installateur (UAC sera demande). L'app continue de tourner ;
+            # Inno Setup demandera au user de la fermer pour finaliser l'install.
+            Start-Process -FilePath $tempPath -ErrorAction Stop
+        } catch {
+            $updateBannerLabel.Text = "Echec du telechargement. Cliquez pour reessayer."
+            $updateBanner.Cursor = [System.Windows.Forms.Cursors]::Hand
+        }
+    }
     $updateBanner.Add_Click($openUpdateUrl)
     $updateBannerLabel.Add_Click($openUpdateUrl)
 
@@ -4831,8 +4857,11 @@ function Show-DiagnosticGui {
         try {
             Start-UpdateCheck -OnFound {
                 param($release)
-                $script:UpdateBannerUrl = $release.Url
                 $tag = $release.Tag
+                # v1.4.6 : on construit l'URL directe du Setup.exe pour telechargement in-app
+                # (au lieu de rediriger sur la page GitHub).
+                $script:UpdateBannerTag = $tag
+                $script:UpdateBannerUrl = "https://github.com/Jordan-Bourillot/le-druide-antavirus/releases/download/$tag/LeDruideAntavirus-Setup-$tag.exe"
                 $updateBannerLabel.Text = "Nouvelle version $tag disponible - Cliquez pour la telecharger"
                 $updateBanner.Visible = $true
             }

@@ -2,6 +2,15 @@
 
 Les changements notables sont documentés ici. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le versionnage respecte [SemVer](https://semver.org/lang/fr/).
 
+## [1.4.6] - 2026-05-12
+
+### Modifié
+- **Vocabulaire des scans clarifié** : pour lever la confusion entre "Diagnostic complet" / "Scan express" / "Mode complet".
+  - Carte principale renommée "Diagnostic standard" (30 sec, vérifie sécurité, disque, mémoire, navigateurs).
+  - Carte secondaire renommée "Diagnostic rapide" (15 sec, vérifications essentielles uniquement).
+  - Case à cocher renommée en "Inclure la recherche des mises à jour Windows (ajoute ~30 sec)" pour expliciter ce qu'elle ajoute concrètement.
+- **Téléchargement direct des mises à jour** : le bandeau doré "Nouvelle version disponible" télécharge maintenant l'installateur dans `%TEMP%` et le lance directement, au lieu de rediriger l'utilisateur sur la page GitHub. Plus de navigation hors de l'application.
+
 ## [1.4.5] - 2026-05-12
 
 ### Corrigé
