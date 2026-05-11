@@ -3265,13 +3265,28 @@ function New-FindingCard {
     $explWidth = if ($hasButton) { $Width - 280 } else { $Width - 92 }
     if ($explWidth -lt 200) { $explWidth = 200 }
 
+    # v1.4.5 : mesure la hauteur reelle du texte pour eviter qu'il soit coupe.
+    $explFont = New-Object System.Drawing.Font('Segoe UI', 9.5)
+    $measureSize = [System.Windows.Forms.TextRenderer]::MeasureText(
+        [string]$Presentation.Explanation,
+        $explFont,
+        (New-Object System.Drawing.Size $explWidth, 2000),
+        ([System.Windows.Forms.TextFormatFlags]::WordBreak -bor [System.Windows.Forms.TextFormatFlags]::TextBoxControl)
+    )
+    $explHeight = [Math]::Max(88, $measureSize.Height + 6)
+
     $expl = New-Object System.Windows.Forms.Label
     $expl.Text = $Presentation.Explanation
-    $expl.Font = New-Object System.Drawing.Font('Segoe UI', 9.5)
+    $expl.Font = $explFont
     $expl.ForeColor = [System.Drawing.Color]::FromArgb(90, 107, 95)
     $expl.Location = New-Object System.Drawing.Point(72, 44)
-    $expl.Size = New-Object System.Drawing.Size($explWidth, 88)
+    $expl.Size = New-Object System.Drawing.Size($explWidth, $explHeight)
     $card.Controls.Add($expl)
+
+    # Ajuste la hauteur du card pour englober l'explication + le bouton eventuel.
+    $bottomOfExpl = 44 + $explHeight + 18
+    $bottomOfButton = if ($hasButton) { 52 + 36 + 18 } else { 0 }
+    $card.Height = [Math]::Max([Math]::Max(140, $bottomOfExpl), $bottomOfButton)
 
     if ($hasButton) {
         $btn = New-Object System.Windows.Forms.Button

@@ -2,6 +2,11 @@
 
 Les changements notables sont documentés ici. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le versionnage respecte [SemVer](https://semver.org/lang/fr/).
 
+## [1.4.5] - 2026-05-12
+
+### Corrigé
+- **Texte des cartes de résultats coupé en bas** : les cartes "Finding" avaient une hauteur fixe de 140 px et une zone d'explication fixée à 88 px de haut. Sur les findings dont le texte d'explication est long (ex. "Espace récupérable détecté"), la dernière ligne était tronquée. Désormais la hauteur de la carte et de la zone de texte est calculée dynamiquement via `TextRenderer.MeasureText` pour englober tout le texte.
+
 ## [1.4.4] - 2026-05-12
 
 ### Modifié
