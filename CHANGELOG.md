@@ -2,6 +2,13 @@
 
 Les changements notables sont documentés ici. Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le versionnage respecte [SemVer](https://semver.org/lang/fr/).
 
+## [1.5.0] - 2026-05-12
+
+### Ajouté
+- **Compte Pro intégré** : nouvelle section « Compte Pro » dans `Paramètres` qui affiche le statut (Pro actif / version gratuite), permet de coller une clé de licence reçue par email après paiement sur antavirus.fr, et de la valider en ligne contre `https://antavirus.fr/api/validate-license`. La clé activée est stockée localement dans `%APPDATA%\LeDruide\license.json`.
+- **Vérification de licence au démarrage** : `Initialize-ProStatus` est appelé à l'ouverture de l'app, lit la licence locale et la re-valide à distance (timeout 8 s, non bloquant). Tolérance 7 jours en mode hors-ligne pour ne pas désactiver les fonctions Pro en l'absence de réseau.
+- **Lien direct vers achat Pro** : depuis `Paramètres > Compte Pro`, le lien « Acheter Pro (7 €/mois) sur antavirus.fr » ouvre directement la page tarifs dans le navigateur.
+
 ## [1.4.8] - 2026-05-12
 
 ### Modifié

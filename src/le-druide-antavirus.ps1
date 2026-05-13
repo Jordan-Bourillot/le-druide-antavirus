@@ -1378,6 +1378,123 @@ function Save-DruidixSettings {
     } catch { return $false }
 }
 
+# ============================================================
+# LICENCE PRO (v1.5.0)
+# ------------------------------------------------------------
+# Une licence valide est :
+#   - Stockee dans %APPDATA%\LeDruide\license.json
+#   - Verifiee une fois au demarrage contre https://antavirus.fr/api/validate-license
+#   - Le flag $script:IsPro est mis a jour selon la reponse de l'API
+# ============================================================
+
+$script:IsPro       = $false
+$script:ProEmail    = $null
+$script:ProLicense  = $null
+
+function Get-LicensePath {
+    $dir = Join-Path $env:APPDATA 'LeDruide'
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    return Join-Path $dir 'license.json'
+}
+
+function Read-LocalLicense {
+    $path = Get-LicensePath
+    if (-not (Test-Path $path)) { return $null }
+    try {
+        return Get-Content $path -Raw -Encoding UTF8 | ConvertFrom-Json
+    } catch { return $null }
+}
+
+function Save-LocalLicense {
+    param([string]$LicenseKey, [string]$Email)
+    $path = Get-LicensePath
+    try {
+        $obj = [PSCustomObject]@{
+            LicenseKey   = $LicenseKey
+            Email        = $Email
+            ActivatedAt  = (Get-Date).ToString('o')
+            LastVerified = (Get-Date).ToString('o')
+        }
+        $obj | ConvertTo-Json -Depth 3 | Out-File -FilePath $path -Encoding UTF8 -Force
+        return $true
+    } catch { return $false }
+}
+
+function Remove-LocalLicense {
+    $path = Get-LicensePath
+    if (Test-Path $path) {
+        try { Remove-Item -LiteralPath $path -Force -ErrorAction Stop ; return $true } catch { return $false }
+    }
+    return $true
+}
+
+function Test-RemoteLicense {
+    <#
+    .SYNOPSIS
+    Verifie une cle de licence contre l'API antavirus.fr.
+    Retourne un objet { valid: bool, status: str, email: str, plan: str, error: str }.
+    #>
+    param([string]$LicenseKey)
+    if ([string]::IsNullOrEmpty($LicenseKey)) {
+        return [PSCustomObject]@{ valid = $false; error = 'Cle vide' }
+    }
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $body = @{ licenseKey = $LicenseKey } | ConvertTo-Json -Compress
+        $r = Invoke-RestMethod -Uri 'https://antavirus.fr/api/validate-license' `
+            -Method Post `
+            -ContentType 'application/json' `
+            -Body $body `
+            -TimeoutSec 8 `
+            -ErrorAction Stop
+        return [PSCustomObject]@{
+            valid  = [bool]$r.valid
+            status = $r.status
+            email  = $r.email
+            plan   = $r.plan
+            error  = $r.error
+        }
+    } catch {
+        return [PSCustomObject]@{ valid = $false; error = "Reseau : $($_.Exception.Message)" }
+    }
+}
+
+function Initialize-ProStatus {
+    <#
+    .SYNOPSIS
+    Lit la licence locale, la verifie a distance, et met a jour $script:IsPro.
+    Appele au demarrage de l'app (Show-DiagnosticGui).
+    #>
+    $script:IsPro      = $false
+    $script:ProEmail   = $null
+    $script:ProLicense = $null
+
+    $local = Read-LocalLicense
+    if (-not $local -or -not $local.LicenseKey) { return }
+
+    # Verification distante (mode optimiste : si l'API ne repond pas, on garde Pro
+    # base sur la verif precedente reussie il y a moins de 7 jours - tolerance offline)
+    $remote = Test-RemoteLicense -LicenseKey $local.LicenseKey
+    if ($remote.valid) {
+        $script:IsPro = $true
+        $script:ProEmail = $remote.email
+        $script:ProLicense = $local.LicenseKey
+        # Met a jour le timestamp de derniere verif
+        try { Save-LocalLicense -LicenseKey $local.LicenseKey -Email $remote.email | Out-Null } catch {}
+    } elseif (-not $remote.valid -and $remote.error -like '*Reseau*') {
+        # Hors-ligne : tolerance 7 jours
+        try {
+            $lastOk = [datetime]::Parse($local.LastVerified)
+            if (((Get-Date) - $lastOk).TotalDays -lt 7) {
+                $script:IsPro = $true
+                $script:ProEmail = $local.Email
+                $script:ProLicense = $local.LicenseKey
+            }
+        } catch {}
+    }
+    # Si l'API repond "Licence non active" ou autre, on reste en mode gratuit ; la cle locale reste pour debug.
+}
+
 function Protect-DruidixKey {
     param([string]$Plain)
     if ([string]::IsNullOrEmpty($Plain)) { return '' }
@@ -1546,8 +1663,8 @@ function Show-SettingsDialog {
     $cAccent = [System.Drawing.Color]::FromArgb(0x1F, 0x4D, 0x3A)
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = 'Paramètres - Clés API'
-    $form.Size = New-Object System.Drawing.Size(640, 740)
+    $form.Text = 'Paramètres - Compte Pro et clés API'
+    $form.Size = New-Object System.Drawing.Size(640, 900)
     $form.StartPosition = 'CenterParent'
     $form.FormBorderStyle = 'FixedDialog'
     $form.MaximizeBox = $false
@@ -1685,6 +1802,143 @@ function Show-SettingsDialog {
 
         $y += 96
     }
+
+    # ====================================================
+    # COMPTE PRO (v1.5.0) - carte de gestion de la licence
+    # ====================================================
+    $proCard = New-Object System.Windows.Forms.Panel
+    $proCard.Location = New-Object System.Drawing.Point(20, $y)
+    $proCard.Size = New-Object System.Drawing.Size(580, 140)
+    $proCard.BackColor = $cCard
+    $proCard.Add_Paint({
+        param($s, $e)
+        $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(200, 164, 92))
+        $e.Graphics.DrawRectangle($pen, 0, 0, $s.Width-1, $s.Height-1)
+        $pen.Dispose()
+        # Bande or a gauche
+        $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200, 164, 92))
+        $e.Graphics.FillRectangle($brush, 0, 0, 5, $s.Height)
+        $brush.Dispose()
+    })
+    $form.Controls.Add($proCard)
+
+    $proTitle = New-Object System.Windows.Forms.Label
+    $proTitle.Text = 'Compte Pro'
+    $proTitle.Font = New-Object System.Drawing.Font('Segoe UI', 11, [System.Drawing.FontStyle]::Bold)
+    $proTitle.Location = New-Object System.Drawing.Point(15, 8)
+    $proTitle.AutoSize = $true
+    $proCard.Controls.Add($proTitle)
+
+    $proStatusLabel = New-Object System.Windows.Forms.Label
+    $proStatusLabel.Location = New-Object System.Drawing.Point(15, 32)
+    $proStatusLabel.Size = New-Object System.Drawing.Size(560, 22)
+    $proStatusLabel.Font = New-Object System.Drawing.Font('Segoe UI', 9.5)
+    if ($script:IsPro) {
+        $proStatusLabel.Text = "Statut : Pro actif" + $(if ($script:ProEmail) { " (" + $script:ProEmail + ")" } else { "" })
+        $proStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(31, 77, 58)
+    } else {
+        $proStatusLabel.Text = 'Statut : version gratuite. Passez Pro pour debloquer IA illimitee, scans planifies et historique complet.'
+        $proStatusLabel.ForeColor = $cTextMuted
+    }
+    $proCard.Controls.Add($proStatusLabel)
+
+    $proKeyHint = New-Object System.Windows.Forms.Label
+    $proKeyHint.Text = 'Cle :'
+    $proKeyHint.Font = New-Object System.Drawing.Font('Segoe UI', 8.5)
+    $proKeyHint.ForeColor = $cTextMuted
+    $proKeyHint.Location = New-Object System.Drawing.Point(15, 65)
+    $proKeyHint.AutoSize = $true
+    $proCard.Controls.Add($proKeyHint)
+
+    $proKeyBox = New-Object System.Windows.Forms.TextBox
+    $proKeyBox.Location = New-Object System.Drawing.Point(50, 63)
+    $proKeyBox.Size = New-Object System.Drawing.Size(405, 22)
+    $proKeyBox.Font = New-Object System.Drawing.Font('Consolas', 9)
+    $proKeyBox.Text = if ($script:ProLicense) { $script:ProLicense } else { 'DRUIDE-XXXXX-XXXXX-XXXXX-XXXXX' }
+    $proCard.Controls.Add($proKeyBox)
+
+    $btnProActivate = New-Object System.Windows.Forms.Button
+    $btnProActivate.Text = if ($script:IsPro) { 'Re-verifier' } else { 'Activer' }
+    $btnProActivate.Location = New-Object System.Drawing.Point(465, 62)
+    $btnProActivate.Size = New-Object System.Drawing.Size(95, 24)
+    $btnProActivate.FlatStyle = 'Flat'
+    $btnProActivate.BackColor = $cAccent
+    $btnProActivate.ForeColor = [System.Drawing.Color]::White
+    $btnProActivate.FlatAppearance.BorderSize = 0
+    $btnProActivate.Font = New-Object System.Drawing.Font('Segoe UI', 8.5, [System.Drawing.FontStyle]::Bold)
+    $btnProActivate.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $btnProActivate.Add_Click({
+        $key = $proKeyBox.Text.Trim().ToUpper()
+        if ([string]::IsNullOrEmpty($key) -or $key -notlike 'DRUIDE-*') {
+            [System.Windows.Forms.MessageBox]::Show('Format de cle invalide. La cle commence par DRUIDE-...', 'Activation', 'OK', 'Warning') | Out-Null
+            return
+        }
+        $btnProActivate.Enabled = $false
+        $btnProActivate.Text = 'Verification...'
+        try {
+            $result = Test-RemoteLicense -LicenseKey $key
+            if ($result.valid) {
+                Save-LocalLicense -LicenseKey $key -Email $result.email | Out-Null
+                $script:IsPro = $true
+                $script:ProEmail = $result.email
+                $script:ProLicense = $key
+                $proStatusLabel.Text = "Statut : Pro actif" + $(if ($result.email) { " (" + $result.email + ")" } else { "" })
+                $proStatusLabel.ForeColor = [System.Drawing.Color]::FromArgb(31, 77, 58)
+                [System.Windows.Forms.MessageBox]::Show('Cle valide. Vos features Pro sont debloquees.', 'Activation reussie', 'OK', 'Information') | Out-Null
+            } else {
+                $msg = if ($result.error) { $result.error } else { 'Cle non reconnue' }
+                [System.Windows.Forms.MessageBox]::Show("Activation refusee : $msg", 'Erreur', 'OK', 'Warning') | Out-Null
+            }
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show("Erreur reseau : $($_.Exception.Message)", 'Erreur', 'OK', 'Error') | Out-Null
+        }
+        $btnProActivate.Enabled = $true
+        $btnProActivate.Text = if ($script:IsPro) { 'Re-verifier' } else { 'Activer' }
+    })
+    $proCard.Controls.Add($btnProActivate)
+
+    $btnProBuy = New-Object System.Windows.Forms.LinkLabel
+    $btnProBuy.Text = if ($script:IsPro) { 'Gerer mon abonnement (portail Stripe)' } else { 'Acheter Pro (7 EUR/mois) sur antavirus.fr ->' }
+    $btnProBuy.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+    $btnProBuy.LinkColor = [System.Drawing.Color]::FromArgb(200, 164, 92)
+    $btnProBuy.ActiveLinkColor = [System.Drawing.Color]::FromArgb(31, 77, 58)
+    $btnProBuy.Location = New-Object System.Drawing.Point(15, 100)
+    $btnProBuy.AutoSize = $true
+    $btnProBuy.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $btnProBuy.Add_Click({
+        try { Start-Process 'https://antavirus.fr/#tarifs' } catch {}
+    })
+    $proCard.Controls.Add($btnProBuy)
+
+    if ($script:IsPro) {
+        $btnProRemove = New-Object System.Windows.Forms.Button
+        $btnProRemove.Text = 'Deconnecter'
+        $btnProRemove.Location = New-Object System.Drawing.Point(465, 100)
+        $btnProRemove.Size = New-Object System.Drawing.Size(95, 22)
+        $btnProRemove.FlatStyle = 'Flat'
+        $btnProRemove.BackColor = $cCard
+        $btnProRemove.ForeColor = $cTextMuted
+        $btnProRemove.FlatAppearance.BorderColor = $cBorder
+        $btnProRemove.Font = New-Object System.Drawing.Font('Segoe UI', 8.5)
+        $btnProRemove.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $btnProRemove.Add_Click({
+            $r = [System.Windows.Forms.MessageBox]::Show('Supprimer la cle de licence de ce PC ? L abonnement Stripe continue jusqu a annulation.', 'Confirmer', 'YesNo', 'Question')
+            if ($r -eq 'Yes') {
+                Remove-LocalLicense | Out-Null
+                $script:IsPro = $false
+                $script:ProEmail = $null
+                $script:ProLicense = $null
+                $proStatusLabel.Text = 'Statut : version gratuite. Passez Pro pour debloquer IA illimitee, scans planifies et historique complet.'
+                $proStatusLabel.ForeColor = $cTextMuted
+                $btnProRemove.Visible = $false
+                $btnProActivate.Text = 'Activer'
+                [System.Windows.Forms.MessageBox]::Show('Cle supprimee. L app passe en mode gratuit.', 'Deconnecte', 'OK', 'Information') | Out-Null
+            }
+        })
+        $proCard.Controls.Add($btnProRemove)
+    }
+
+    $y += 156
 
     $defLabel = New-Object System.Windows.Forms.Label
     $defLabel.Text = 'Provider par defaut :'
@@ -3767,6 +4021,9 @@ function Show-DiagnosticGui {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
     [System.Windows.Forms.Application]::EnableVisualStyles()
+
+    # v1.5.0 : verifie la licence Pro au demarrage (asynchrone, non bloquant si lent)
+    try { Initialize-ProStatus } catch {}
 
     # Palette light theme
     $cBg          = [System.Drawing.Color]::FromArgb(0xF4, 0xEC, 0xD8)
